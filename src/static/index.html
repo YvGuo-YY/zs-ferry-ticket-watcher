@@ -1,0 +1,1336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>嵊泗渡轮抢票系统</title>
+<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f0f2f5; }
+#app { height: 100vh; display: flex; flex-direction: column; }
+
+/* ── 登录页 ─────────────────────────── */
+.login-page {
+  display: flex; align-items: center; justify-content: center;
+  height: 100vh; background: linear-gradient(135deg, #1a6fb3 0%, #0d4a7d 100%);
+}
+.login-card {
+  width: 380px; padding: 40px 36px; background: #fff;
+  border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.login-logo { text-align: center; margin-bottom: 28px; }
+.login-logo .icon { font-size: 48px; }
+.login-logo h2 { font-size: 20px; color: #1a6fb3; margin-top: 8px; font-weight: 700; }
+.login-logo p { font-size: 13px; color: #999; margin-top: 4px; }
+
+/* ── 主布局 ─────────────────────────── */
+.layout { display: flex; height: 100vh; overflow: hidden; }
+.sidebar {
+  width: 220px; background: #001529; color: #fff;
+  display: flex; flex-direction: column; flex-shrink: 0;
+}
+.sidebar-header {
+  padding: 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.08);
+  display: flex; align-items: center; gap: 10px;
+}
+.sidebar-header .logo { font-size: 24px; }
+.sidebar-header .title { font-size: 14px; font-weight: 700; line-height: 1.3; color: #fff; }
+.sidebar-header .subtitle { font-size: 11px; color: rgba(255,255,255,0.45); }
+.sidebar-nav { flex: 1; padding: 8px 0; overflow-y: auto; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 12px 20px;
+  cursor: pointer; color: rgba(255,255,255,0.65); font-size: 14px;
+  transition: all 0.2s; border-left: 3px solid transparent;
+}
+.nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.nav-item.active { background: #1a6fb3; color: #fff; border-left-color: #40a9ff; }
+.nav-item .icon { font-size: 17px; width: 20px; text-align: center; }
+.sidebar-footer {
+  padding: 16px; border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 12px; color: rgba(255,255,255,0.4);
+}
+.main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.topbar {
+  height: 56px; background: #fff; border-bottom: 1px solid #e8e8e8;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.topbar-title { font-size: 16px; font-weight: 600; color: #1a1a1a; }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+.content { flex: 1; overflow-y: auto; padding: 24px; }
+
+/* ── 通用 ────────────────────────────── */
+.page-header { margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
+.page-header h3 { font-size: 17px; font-weight: 600; color: #1a1a1a; }
+
+/* ── 任务卡片 ────────────────────────── */
+.task-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.task-card {
+  background: #fff; border-radius: 10px; padding: 18px 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: pointer;
+  border: 2px solid transparent; transition: all 0.2s;
+}
+.task-card:hover { border-color: #1a6fb3; box-shadow: 0 4px 16px rgba(26,111,179,0.15); }
+.task-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.task-route { font-size: 16px; font-weight: 700; color: #1a1a1a; display: flex; align-items: center; gap: 6px; }
+.task-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+.task-meta-item { font-size: 12px; color: #666; }
+.task-meta-item span { color: #1a1a1a; font-weight: 500; }
+.task-footer { display: flex; align-items: center; justify-content: space-between; }
+.task-passengers { font-size: 12px; color: #888; }
+
+/* ── 日志 ────────────────────────────── */
+.log-container {
+  background: #0d1117; border-radius: 8px; padding: 12px 16px;
+  font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px;
+  height: 360px; overflow-y: auto; color: #c9d1d9;
+}
+.log-line { padding: 2px 0; line-height: 1.6; }
+.log-line.INFO { color: #79c0ff; }
+.log-line.WARN { color: #f0883e; }
+.log-line.ERROR { color: #ff7b72; }
+.log-time { color: #6e7681; margin-right: 8px; }
+
+/* ── 端口选择 ────────────────────────── */
+.port-select-container { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
+<script src="https://unpkg.com/@element-plus/icons-vue/dist/index.iife.min.js"></script>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+const { ElMessage, ElMessageBox, ElNotification } = ElementPlus;
+
+// ─── API 工具 ──────────────────────────────────────────────
+const TOKEN_KEY = "ferry_token";
+const USER_KEY  = "ferry_user";
+
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ""; }
+function getUser()  { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); }
+function setAuth(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+async function api(method, path, body = null) {
+  const opts = {
+    method,
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${getToken()}` },
+  };
+  if (body !== null) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (res.status === 401) { clearAuth(); location.reload(); }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "请求失败");
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+const http = {
+  get:    (p)       => api("GET",    p),
+  post:   (p, b)    => api("POST",   p, b),
+  put:    (p, b)    => api("PUT",    p, b),
+  delete: (p)       => api("DELETE", p),
+};
+
+// ─── 格式化工具 ───────────────────────────────────────────
+function fmtDate(s) {
+  if (!s) return "-";
+  return new Date(s).toLocaleString("zh-CN", { hour12: false });
+}
+function statusLabel(s) {
+  return { pending:"等待中", running:"运行中", booked:"已下单", failed:"失败", stopped:"已停止" }[s] || s;
+}
+function statusType(s) {
+  return { pending:"info", running:"primary", booked:"success", failed:"danger", stopped:"warning" }[s] || "info";
+}
+
+// ══════════════════════════════════════════════════════════
+// 主应用
+// ══════════════════════════════════════════════════════════
+const App = {
+  template: `
+  <!-- 登录页 -->
+  <div v-if="!isLoggedIn" class="login-page">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="icon">⛴️</div>
+        <h2>嵊泗渡轮抢票系统</h2>
+        <p>Shenjiawan Ferry Ticket Watcher</p>
+      </div>
+      <el-form @submit.prevent="doLogin" :model="loginForm" label-position="top">
+        <el-form-item label="用户名">
+          <el-input v-model="loginForm.username" placeholder="admin" prefix-icon="User" size="large" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="loginForm.password" type="password" placeholder="密码" prefix-icon="Lock"
+            size="large" show-password @keyup.enter="doLogin" />
+        </el-form-item>
+        <el-button type="primary" size="large" style="width:100%;margin-top:8px"
+          :loading="loginLoading" @click="doLogin">登录</el-button>
+      </el-form>
+    </div>
+  </div>
+
+  <!-- 主布局 -->
+  <div v-else class="layout">
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">⛴️</div>
+        <div>
+          <div class="title">渡轮抢票系统</div>
+          <div class="subtitle">Ferry Ticket Watcher</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <div v-for="item in navItems" :key="item.view"
+          class="nav-item" :class="{active: view === item.view}"
+          @click="view = item.view">
+          <span class="icon">{{ item.icon }}</span>
+          <span>{{ item.label }}</span>
+        </div>
+      </nav>
+      <div class="sidebar-footer">{{ currentUser?.username }} · {{ currentUser?.role }}</div>
+    </div>
+
+    <!-- 主区域 -->
+    <div class="main-area">
+      <div class="topbar">
+        <span class="topbar-title">{{ currentNavLabel }}</span>
+        <div class="topbar-right">
+          <el-tag type="success" size="small" v-if="seleniumOk">Selenium ✓</el-tag>
+          <el-tag type="danger" size="small" v-else>Selenium ✗</el-tag>
+          <el-button size="small" text @click="doLogout">退出登录</el-button>
+        </div>
+      </div>
+      <div class="content">
+        <tasks-view     v-if="view==='tasks'"      ref="tasksRef" />
+        <ports-view     v-if="view==='ports'"      />
+        <passengers-view v-if="view==='passengers'" />
+        <vehicles-view  v-if="view==='vehicles'"   />
+        <accounts-view  v-if="view==='accounts'"   />
+        <users-view     v-if="view==='users' && currentUser?.role==='admin'" />
+        <settings-view  v-if="view==='settings'"   @saved="checkSelenium" />
+      </div>
+    </div>
+  </div>
+  `,
+
+  setup() {
+    const isLoggedIn = ref(!!getToken());
+    const currentUser = ref(getUser());
+    const view = ref("tasks");
+    const seleniumOk = ref(false);
+    const loginLoading = ref(false);
+    const loginForm = reactive({ username: "admin", password: "" });
+    const tasksRef = ref(null);
+
+    const navItems = computed(() => {
+      const items = [
+        { view: "tasks",      icon: "🎫", label: "抢票任务" },
+        { view: "ports",      icon: "🔍", label: "港口航线" },
+        { view: "passengers", icon: "👥", label: "旅客管理" },
+        { view: "vehicles",   icon: "🚗", label: "车辆管理" },
+        { view: "accounts",   icon: "🔑", label: "Ferry 账号" },
+        { view: "settings",   icon: "⚙️", label: "系统设置" },
+      ];
+      if (currentUser.value?.role === "admin") {
+        items.splice(4, 0, { view: "users", icon: "👤", label: "用户管理" });
+      }
+      return items;
+    });
+
+    const currentNavLabel = computed(() =>
+      navItems.value.find(i => i.view === view.value)?.label || ""
+    );
+
+    async function doLogin() {
+      loginLoading.value = true;
+      try {
+        const res = await http.post("/api/auth/login", loginForm);
+        setAuth(res.access_token, res.user);
+        isLoggedIn.value = true;
+        currentUser.value = res.user;
+        ElMessage.success("登录成功");
+        checkSelenium();
+      } catch (e) {
+        ElMessage.error(e.message);
+      } finally {
+        loginLoading.value = false;
+      }
+    }
+
+    function doLogout() {
+      clearAuth();
+      isLoggedIn.value = false;
+    }
+
+    async function checkSelenium() {
+      try {
+        const r = await http.get("/api/selenium/health");
+        seleniumOk.value = r.ok && r.ready;
+      } catch { seleniumOk.value = false; }
+    }
+
+    onMounted(() => {
+      if (isLoggedIn.value) checkSelenium();
+    });
+
+    return { isLoggedIn, currentUser, view, seleniumOk, loginLoading, loginForm,
+             navItems, currentNavLabel, doLogin, doLogout, checkSelenium, tasksRef };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 抢票任务视图
+// ══════════════════════════════════════════════════════════
+const TasksView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>抢票任务</h3>
+      <el-button type="primary" @click="openCreate">+ 新建任务</el-button>
+    </div>
+
+    <div v-if="tasks.length === 0" style="text-align:center;padding:60px;color:#999">
+      暂无任务，点击右上角新建
+    </div>
+    <div class="task-grid">
+      <div v-for="t in tasks" :key="t.id" class="task-card" @click="openLogs(t)">
+        <div class="task-card-header">
+          <div class="task-route">
+            <span>{{ t.departure_name }}</span>
+            <span style="color:#1a6fb3">→</span>
+            <span>{{ t.destination_name }}</span>
+          </div>
+          <el-tag :type="statusType(t.status)" size="small">{{ statusLabel(t.status) }}</el-tag>
+        </div>
+        <div class="task-meta">
+          <div class="task-meta-item">日期：<span>{{ t.travel_date }}</span></div>
+          <div class="task-meta-item">票种：<span>{{ t.ticket_type }}</span></div>
+          <div class="task-meta-item" v-if="t.seat_class">舱位：<span>{{ t.seat_class }}</span></div>
+          <div class="task-meta-item" v-if="t.vehicle_id">车牌：<span>{{ vehicles.find(v=>v.id===t.vehicle_id)?.plate_number || t.vehicle_id }}</span></div>
+          <div class="task-meta-item">触发：<span>{{ triggerLabel(t) }}</span></div>
+          <div class="task-meta-item">创建：<span>{{ fmtDate(t.created_at) }}</span></div>
+        </div>
+        <div class="task-footer">
+          <div class="task-passengers">旅客 {{ t.passenger_ids.length }} 人</div>
+          <div style="display:flex;gap:8px" @click.stop>
+            <el-button v-if="t.status==='pending'||t.status==='stopped'||t.status==='failed'"
+              type="primary" size="small" @click="startTask(t)">启动</el-button>
+            <el-button v-if="t.status==='running'"
+              type="warning" size="small" @click="stopTask(t)">停止</el-button>
+            <el-button type="danger" size="small" plain @click="deleteTask(t)">删除</el-button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新建任务抽屉 -->
+    <el-drawer v-model="createDrawer" title="新建抢票任务" size="480px" direction="rtl">
+      <el-form :model="form" label-width="88px" size="default">
+        <el-form-item label="Ferry账号" required>
+          <el-select v-model="form.account_id" placeholder="选择账号" style="width:100%">
+            <el-option v-for="a in accounts" :key="a.id"
+              :label="a.phone + (a.remark ? ' (' + a.remark + ')' : '')" :value="a.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="出发港口" required>
+          <el-select v-model="departureNum" placeholder="选择出发港" style="width:100%" @change="onDepartureChange">
+            <el-option v-for="p in departurePorts" :key="p.num" :label="p.name" :value="p.num" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="到达港口" required>
+          <el-select v-model="destinationNum" placeholder="先选出发港" style="width:100%"
+            :disabled="!departureNum">
+            <el-option v-for="p in destinationPorts" :key="p.num" :label="p.name" :value="p.num" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="出行日期" required>
+          <el-date-picker v-model="form.travel_date" type="date" placeholder="选择日期"
+            value-format="YYYY-MM-DD" style="width:100%" :disabled-date="disablePassedDate" />
+        </el-form-item>
+        <el-form-item label="票种">
+          <el-radio-group v-model="form.ticket_type">
+            <el-radio value="旅客">旅客</el-radio>
+            <el-radio value="小客车及随车人员">小客车</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.ticket_type==='\u5c0f\u5ba2\u8f66\u53ca\u968f\u8f66\u4eba\u5458'" label="车辆" required>
+          <el-select v-model="form.vehicle_id" placeholder="选择车辆" style="width:100%" clearable>
+            <el-option v-for="v in vehicles" :key="v.id"
+              :label="v.plate_number + (v.owner_name ? ' — ' + v.owner_name : '') + (v.vehicle_type ? ' (' + v.vehicle_type + ')' : '')"
+              :value="v.id" />
+          </el-select>
+          <div v-if="vehicles.length===0" style="color:#f56c6c;font-size:12px;margin-top:4px">
+            请先在“车辆管理”中添加车辆
+          </div>
+        </el-form-item>
+        <el-form-item label="舱位偏好">
+          <el-select v-model="form.seat_class" placeholder="不限（任意有票舱位）" clearable style="width:100%">
+            <el-option label="不限" value="" />
+            <el-option label="上舱" value="上舱" />
+            <el-option label="中舱" value="中舱" />
+            <el-option label="下前舱" value="下前舱" />
+            <el-option label="下舱卧" value="下舱卧" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="旅客" required>
+          <div style="width:100%">
+            <el-checkbox-group v-model="form.passenger_ids">
+              <el-checkbox v-for="p in passengers" :key="p.id" :value="p.id" style="margin-bottom:4px;display:block">
+                {{ p.name }}（{{ p.id_type }}：{{ p.id_number }}）
+              </el-checkbox>
+            </el-checkbox-group>
+            <div v-if="passengers.length===0" style="color:#999;font-size:12px">
+              请先在"旅客管理"中添加旅客
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item label="触发方式" required>
+          <el-radio-group v-model="form.trigger_type">
+            <el-radio value="poll">立即轮询</el-radio>
+            <el-radio value="schedule">定时开售</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.trigger_type==='poll'" label="间隔(秒)">
+          <el-input-number v-model="pollInterval" :min="5" :max="300" />
+        </el-form-item>
+        <el-form-item v-if="form.trigger_type==='schedule'" label="触发时间">
+          <el-date-picker v-model="scheduleTime" type="datetime" placeholder="选择开售时间"
+            value-format="YYYY-MM-DDTHH:mm:ss" style="width:100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDrawer=false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="submitCreate">创建并启动</el-button>
+      </template>
+    </el-drawer>
+
+    <!-- 日志抽屉 -->
+    <el-drawer v-model="logDrawer" :title="logTitle" size="600px" direction="rtl">
+      <div v-if="logTask">
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+          <el-tag :type="statusType(logTask.status)">{{ statusLabel(logTask.status) }}</el-tag>
+          <span style="font-size:13px;color:#666">
+            {{ logTask.departure_name }} → {{ logTask.destination_name }} · {{ logTask.travel_date }}
+          </span>
+        </div>
+      </div>
+      <div class="log-container" ref="logEl">
+        <div v-for="(l, i) in logs" :key="i" class="log-line" :class="l.level">
+          <span class="log-time">{{ fmtDate(l.created_at) }}</span>
+          <span class="log-badge">[{{ l.level }}]</span>
+          {{ l.message }}
+        </div>
+        <div v-if="logs.length===0" style="color:#666;text-align:center;padding:20px">暂无日志</div>
+      </div>
+    </el-drawer>
+  </div>
+  `,
+
+  setup() {
+    const tasks = ref([]);
+    const accounts = ref([]);
+    const passengers = ref([]);
+    const vehicles = ref([]);
+    const routes = ref([]);
+    const createDrawer = ref(false);
+    const logDrawer = ref(false);
+    const creating = ref(false);
+    const logTask = ref(null);
+    const logs = ref([]);
+    const logEl = ref(null);
+    let wsConn = null;
+
+    const departureNum = ref(null);
+    const destinationNum = ref(null);
+    const pollInterval = ref(10);
+    const scheduleTime = ref("");
+
+    const form = reactive({
+      account_id: null,
+      travel_date: "",
+      ticket_type: "旅客",
+      seat_class: "",
+      vehicle_id: null,
+      passenger_ids: [],
+      trigger_type: "poll",
+    });
+
+    const departurePorts = computed(() => {
+      const seen = new Set();
+      return routes.value
+        .filter(r => { const ok = !seen.has(r.start_port_num); seen.add(r.start_port_num); return ok; })
+        .map(r => ({ num: r.start_port_num, name: r.start_port_name }));
+    });
+
+    const destinationPorts = computed(() => {
+      if (!departureNum.value) return [];
+      return routes.value
+        .filter(r => r.start_port_num === departureNum.value)
+        .map(r => ({ num: r.end_port_num, name: r.end_port_name }));
+    });
+
+    function onDepartureChange() { destinationNum.value = null; }
+
+    function disablePassedDate(d) { return d < new Date(new Date().setHours(0,0,0,0)); }
+
+    async function load() {
+      [tasks.value, accounts.value, passengers.value, vehicles.value] = await Promise.all([
+        http.get("/api/tasks/"), http.get("/api/accounts/"), http.get("/api/passengers/"),
+        http.get("/api/vehicles/"),
+      ]);
+      try {
+        const r = await http.get("/api/ports/");
+        routes.value = r.routes;
+      } catch {}
+    }
+
+    async function openCreate() {
+      departureNum.value = null;
+      destinationNum.value = null;
+      form.account_id = null;
+      form.travel_date = "";
+      form.ticket_type = "旅客";
+      form.seat_class = "";
+      form.vehicle_id = null;
+      form.passenger_ids = [];
+      form.trigger_type = "poll";
+      pollInterval.value = 10;
+      createDrawer.value = true;
+    }
+
+    async function submitCreate() {
+      if (!form.account_id) return ElMessage.warning("请选择 Ferry 账号");
+      if (!departureNum.value) return ElMessage.warning("请选择出发港");
+      if (!destinationNum.value) return ElMessage.warning("请选择到达港");
+      if (!form.travel_date) return ElMessage.warning("请选择日期");
+      if (!form.passenger_ids.length) return ElMessage.warning("请选择至少一名旅客");
+      if (form.ticket_type === "小客车及随车人员" && !form.vehicle_id)
+        return ElMessage.warning("小客车票请选择车辆");
+
+      const dep = departurePorts.value.find(p => p.num === departureNum.value);
+      const dst = destinationPorts.value.find(p => p.num === destinationNum.value);
+      const trigVal = form.trigger_type === "poll"
+        ? String(pollInterval.value)
+        : scheduleTime.value;
+
+      creating.value = true;
+      try {
+        const task = await http.post("/api/tasks/", {
+          ...form,
+          departure_num: departureNum.value,
+          departure_name: dep?.name || "",
+          destination_num: destinationNum.value,
+          destination_name: dst?.name || "",
+          trigger_value: trigVal,
+          seat_class: form.seat_class,
+        });
+        await http.post(`/api/tasks/${task.id}/start`);
+        ElMessage.success("任务已创建并启动");
+        createDrawer.value = false;
+        load();
+      } catch (e) {
+        ElMessage.error(e.message);
+      } finally {
+        creating.value = false;
+      }
+    }
+
+    async function startTask(t) {
+      try {
+        await http.post(`/api/tasks/${t.id}/start`);
+        ElMessage.success("任务已启动"); load();
+      } catch (e) { ElMessage.error(e.message); }
+    }
+
+    async function stopTask(t) {
+      try {
+        await http.post(`/api/tasks/${t.id}/stop`);
+        ElMessage.success("任务已停止"); load();
+      } catch (e) { ElMessage.error(e.message); }
+    }
+
+    async function deleteTask(t) {
+      await ElMessageBox.confirm(`确认删除任务 #${t.id}？`, "删除确认", { type: "warning" });
+      try {
+        await http.delete(`/api/tasks/${t.id}`);
+        ElMessage.success("已删除"); load();
+      } catch (e) { ElMessage.error(e.message); }
+    }
+
+    const logTitle = computed(() =>
+      logTask.value ? `任务 #${logTask.value.id} 实时日志` : "日志"
+    );
+
+    async function openLogs(t) {
+      logTask.value = t;
+      logDrawer.value = true;
+      logs.value = await http.get(`/api/tasks/${t.id}/logs?limit=200`);
+      nextTick(() => { if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight; });
+
+      // WebSocket 订阅实时日志
+      if (wsConn) wsConn.close();
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      wsConn = new WebSocket(`${proto}//${location.host}/ws/tasks/${t.id}/logs`);
+      wsConn.onmessage = (ev) => {
+        const data = JSON.parse(ev.data);
+        if (data.ping) return;
+        logs.value.push({ level: data.level, message: data.message, created_at: new Date().toISOString() });
+        nextTick(() => { if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight; });
+      };
+    }
+
+    watch(logDrawer, v => { if (!v && wsConn) { wsConn.close(); wsConn = null; } });
+
+    function triggerLabel(t) {
+      return t.trigger_type === "poll" ? `每 ${t.trigger_value}s 轮询` : `定时 ${t.trigger_value}`;
+    }
+
+    onMounted(load);
+
+    return { tasks, accounts, passengers, vehicles, routes, createDrawer, logDrawer, creating,
+             logTask, logs, logEl, form, departureNum, destinationNum, departurePorts,
+             destinationPorts, pollInterval, scheduleTime, onDepartureChange,
+             disablePassedDate, openCreate, submitCreate, startTask, stopTask,
+             deleteTask, openLogs, logTitle, triggerLabel, fmtDate, statusLabel, statusType };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 港口航线视图
+// ══════════════════════════════════════════════════════════
+const PortsView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>港口航线图</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <el-tag v-if="updatedAt" type="info" size="small">缓存 {{ fmtDate(updatedAt) }}</el-tag>
+        <el-button @click="refresh(true)" :loading="loading" size="small">🔄 刷新</el-button>
+        <el-button @click="showTable=!showTable" size="small">{{ showTable ? '📍 拓扑图' : '📋 列表' }}</el-button>
+      </div>
+    </div>
+
+    <!-- 列表模式 -->
+    <template v-if="showTable">
+      <el-table :data="routes" border stripe style="width:100%" v-loading="loading" size="small">
+        <el-table-column label="出发港" prop="start_port_name" />
+        <el-table-column label="编号" prop="start_port_num" width="80" />
+        <el-table-column label="到达港" prop="end_port_name" />
+        <el-table-column label="编号" prop="end_port_num" width="80" />
+      </el-table>
+    </template>
+
+    <!-- 拓扑图模式 -->
+    <template v-else>
+      <div v-loading="loading" style="background:#0a1628;border-radius:12px;padding:16px;position:relative;user-select:none;">
+
+        <!-- 图例 -->
+        <div style="position:absolute;top:16px;right:16px;background:rgba(0,0,0,0.55);border-radius:8px;padding:10px 14px;font-size:12px;color:#ccc;line-height:1.9;z-index:10;">
+          <div><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#3b82f6;margin-right:6px;vertical-align:middle"></span>嵊泗岛群（核心）</div>
+          <div><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#f97316;margin-right:6px;vertical-align:middle"></span>上海</div>
+          <div><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#22c55e;margin-right:6px;vertical-align:middle"></span>大陆 / 岱山</div>
+          <div><span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:#a855f7;margin-right:6px;vertical-align:middle"></span>其他岛屿</div>
+          <div style="margin-top:6px;border-top:1px solid rgba(255,255,255,0.15);padding-top:6px;">
+            <span style="display:inline-block;width:22px;height:2px;background:#60a5fa;margin-right:6px;vertical-align:middle"></span>岛内航线
+          </div>
+          <div><span style="display:inline-block;width:22px;height:2px;background:#fb923c;border-top:2px dashed #fb923c;margin-right:6px;vertical-align:middle"></span>长途航线</div>
+          <div><span style="display:inline-block;width:22px;height:2px;background:#4ade80;border-top:2px dashed #4ade80;margin-right:6px;vertical-align:middle"></span>中途航线</div>
+        </div>
+
+        <!-- SVG 画布 -->
+        <svg :width="svgW" :height="svgH" style="display:block;margin:0 auto;overflow:visible;">
+          <defs>
+            <marker id="arr-blue" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="#60a5fa" opacity="0.7"/>
+            </marker>
+            <marker id="arr-orange" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="#fb923c" opacity="0.7"/>
+            </marker>
+            <marker id="arr-green" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="#4ade80" opacity="0.7"/>
+            </marker>
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="3" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+
+          <!-- 区域背景 -->
+          <ellipse cx="108" cy="62" rx="90" ry="32" fill="rgba(249,115,22,0.08)" stroke="rgba(249,115,22,0.2)" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="18" y="32" fill="rgba(249,115,22,0.5)" font-size="11">上海</text>
+          <ellipse cx="490" cy="240" rx="220" ry="160" fill="rgba(59,130,246,0.06)" stroke="rgba(59,130,246,0.18)" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="280" y="88" fill="rgba(59,130,246,0.5)" font-size="11">嵊泗列岛</text>
+          <ellipse cx="270" cy="460" rx="200" ry="52" fill="rgba(34,197,94,0.07)" stroke="rgba(34,197,94,0.18)" stroke-width="1" stroke-dasharray="4,3"/>
+          <text x="90" y="432" fill="rgba(34,197,94,0.5)" font-size="11">岱山 / 大陆</text>
+
+          <!-- 航线边 -->
+          <g v-for="edge in visibleEdges" :key="edge.key">
+            <line
+              :x1="edge.x1" :y1="edge.y1" :x2="edge.x2" :y2="edge.y2"
+              :stroke="edge.color"
+              :stroke-width="edge.highlighted ? 2.5 : 1.2"
+              :stroke-dasharray="edge.dashed ? '6,4' : 'none'"
+              :stroke-opacity="edge.dimmed ? 0.12 : (edge.highlighted ? 1 : 0.45)"
+              :marker-end="'url(#arr-' + edge.markerColor + ')'"
+            />
+          </g>
+
+          <!-- 港口节点 -->
+          <g v-for="node in nodes" :key="node.id"
+            style="cursor:pointer"
+            @mouseenter="onHover(node)"
+            @mouseleave="onLeave"
+            @click="onSelect(node)">
+            <!-- 选中光晕 -->
+            <circle v-if="selected && selected.id===node.id"
+              :cx="node.x" :cy="node.y" :r="node.r+7"
+              :fill="node.color" fill-opacity="0.2" filter="url(#glow)"/>
+            <!-- 节点圆 -->
+            <circle
+              :cx="node.x" :cy="node.y" :r="node.r"
+              :fill="node.color"
+              :fill-opacity="hoveredId && hoveredId!==node.id && !connectedIds.has(node.id) ? 0.3 : 1"
+              :stroke="selected && selected.id===node.id ? '#fff' : 'rgba(255,255,255,0.3)'"
+              :stroke-width="selected && selected.id===node.id ? 2.5 : 1"
+            />
+            <!-- 港口名 -->
+            <text
+              :x="node.x + node.labelDx"
+              :y="node.y + node.labelDy"
+              fill="white"
+              :fill-opacity="hoveredId && hoveredId!==node.id && !connectedIds.has(node.id) ? 0.3 : 0.92"
+              font-size="11.5"
+              :font-weight="node.r >= 14 ? '700' : '400'"
+              text-anchor="middle"
+              style="pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,0.8)">
+              {{ node.shortName }}
+            </text>
+          </g>
+        </svg>
+
+        <!-- 选中港口信息面板 -->
+        <div v-if="selected" style="
+          position:absolute;left:16px;bottom:16px;
+          background:rgba(10,22,45,0.92);border:1px solid rgba(255,255,255,0.15);
+          border-radius:10px;padding:14px 18px;min-width:220px;max-width:300px;
+          backdrop-filter:blur(4px);z-index:10;">
+          <div style="font-weight:700;color:#fff;font-size:14px;margin-bottom:4px;">
+            {{ selected.name }}
+            <span style="font-size:11px;color:#888;font-weight:400;margin-left:6px">No.{{ selected.id }}</span>
+          </div>
+          <div style="font-size:12px;color:#aaa;margin-bottom:10px">{{ outRoutes.length }} 条出发航线</div>
+          <div v-for="r in outRoutes" :key="r.end" style="
+            display:flex;align-items:center;justify-content:space-between;
+            padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.07);font-size:12px;color:#ddd;">
+            <span>→ {{ r.endName }}</span>
+            <span style="color:#666;font-size:11px">{{ r.end }}</span>
+          </div>
+          <div style="margin-top:10px;text-align:right">
+            <el-button size="small" type="primary" plain @click="selected=null">关闭</el-button>
+          </div>
+        </div>
+
+        <!-- 状态栏 -->
+        <div style="text-align:center;margin-top:12px;font-size:12px;color:rgba(255,255,255,0.3)">
+          共 {{ nodeCount }} 个港口 · {{ routes.length }} 条航线
+          <span v-if="hoveredId"> · 悬停：{{ hoveredName }}</span>
+        </div>
+      </div>
+    </template>
+  </div>
+  `,
+  setup() {
+    const routes = ref([]);
+    const updatedAt = ref(null);
+    const loading = ref(false);
+    const showTable = ref(false);
+    const hoveredId = ref(null);
+    const selected = ref(null);
+
+    const svgW = 820;
+    const svgH = 530;
+
+    // ── 节点坐标（基于真实地理位置映射）──────────────────
+    const NODE_DEFS = [
+      { id: 1036, name: '上海(虹桥长途站)', short: '虹桥',   x:  68, y:  48, r: 11, color: '#f97316', type: 'sh'    },
+      { id: 1046, name: '上海(南浦)',       short: '南浦',   x: 152, y:  72, r: 13, color: '#f97316', type: 'sh'    },
+      { id: 1014, name: '嵊泗(花鸟)',       short: '花鸟',   x: 430, y:  70, r: 12, color: '#3b82f6', type: 'ss'    },
+      { id: 1013, name: '嵊泗(绿华)',       short: '绿华',   x: 495, y: 135, r: 11, color: '#3b82f6', type: 'ss'    },
+      { id: 1016, name: '嵊泗(嵊山)',       short: '嵊山',   x: 662, y: 170, r: 12, color: '#3b82f6', type: 'ss'    },
+      { id: 1048, name: '半升洞',           short: '半升洞', x: 735, y: 145, r: 10, color: '#a855f7', type: 'other' },
+      { id: 1017, name: '嵊泗(枸杞)',       short: '枸杞',   x: 580, y: 220, r: 13, color: '#3b82f6', type: 'ss'    },
+      { id: 1010, name: '嵊泗(泗礁)',       short: '泗礁',   x: 430, y: 232, r: 17, color: '#1d4ed8', type: 'hub'   },
+      { id: 1028, name: '嵊泗(沈家湾)',     short: '沈家湾', x: 345, y: 250, r: 16, color: '#1d4ed8', type: 'hub'   },
+      { id: 1022, name: '三江',             short: '三江',   x:  82, y: 270, r: 10, color: '#22c55e', type: 'main'  },
+      { id: 1021, name: '大衢',             short: '大衢',   x: 118, y: 338, r: 10, color: '#22c55e', type: 'main'  },
+      { id: 1020, name: '岱山(竹屿)',        short: '竹屿',   x: 328, y: 318, r: 10, color: '#22c55e', type: 'main'  },
+      { id: 1018, name: '嵊泗(大洋)',       short: '大洋',   x: 422, y: 328, r: 11, color: '#3b82f6', type: 'ss'    },
+      { id: 1019, name: '嵊泗(五龙)',       short: '五龙',   x: 308, y: 405, r: 10, color: '#3b82f6', type: 'ss'    },
+      { id: 1034, name: '嵊泗(黄龙)',       short: '黄龙',   x: 372, y: 408, r: 11, color: '#3b82f6', type: 'ss'    },
+      { id: 1041, name: '宁波（南）',        short: '宁波',   x:  88, y: 490, r: 12, color: '#22c55e', type: 'main'  },
+      { id: 1056, name: '定海(新城)',        short: '定海',   x: 145, y: 452, r: 11, color: '#22c55e', type: 'main'  },
+      { id: 1030, name: '岱山(衢山)',        short: '衢山',   x: 228, y: 452, r: 11, color: '#22c55e', type: 'main'  },
+      { id: 1031, name: '岱山(燕窝山)',      short: '燕窝山', x: 300, y: 462, r: 11, color: '#22c55e', type: 'main'  },
+      { id: 1053, name: '岱山长途站',        short: '岱山站', x: 368, y: 478, r: 11, color: '#22c55e', type: 'main'  },
+      { id: 1054, name: '岱山旅游集散',      short: '岱山游', x: 440, y: 488, r: 10, color: '#22c55e', type: 'main'  },
+      { id: 1040, name: '东极(庙子湖)',      short: '东极',   x: 680, y: 448, r: 11, color: '#a855f7', type: 'other' },
+    ];
+
+    // 计算标签偏移（避免压住圆圈）
+    const nodes = NODE_DEFS.map(n => ({
+      ...n,
+      shortName: n.short,
+      labelDx: 0,
+      labelDy: n.r + 13,
+    }));
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    // ── 边颜色和类型 ──────────────────────────────────────
+    function edgeStyle(s, e) {
+      const sType = nodeMap[s]?.type;
+      const eType = nodeMap[e]?.type;
+      if (sType === 'sh' || eType === 'sh') return { color: '#fb923c', dashed: true, markerColor: 'orange' };
+      if ((sType === 'main' || eType === 'main') || (sType === 'other' || eType === 'other'))
+        return { color: '#4ade80', dashed: true, markerColor: 'green' };
+      return { color: '#60a5fa', dashed: false, markerColor: 'blue' };
+    }
+
+    // ── 计算连线坐标（缩短到圆边缘）─────────────────────
+    function edgeCoords(sn, en, offset = 0) {
+      const dx = en.x - sn.x, dy = en.y - sn.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / len, uy = dy / len;
+      // 平行偏移（双向路线分开）
+      const ox = -uy * offset, oy = ux * offset;
+      return {
+        x1: sn.x + ux * (sn.r + 2) + ox,
+        y1: sn.y + uy * (sn.r + 2) + oy,
+        x2: en.x - ux * (en.r + 8) + ox,
+        y2: en.y - uy * (en.r + 8) + oy,
+      };
+    }
+
+    // 检测是否有反向路线（用于偏移）
+    const edgeSet = new Set();
+
+    const connectedIds = computed(() => {
+      if (!hoveredId.value) return new Set();
+      const s = new Set([hoveredId.value]);
+      routes.value.forEach(r => {
+        if (r.start_port_num === hoveredId.value) s.add(r.end_port_num);
+        if (r.end_port_num === hoveredId.value) s.add(r.start_port_num);
+      });
+      return s;
+    });
+
+    const visibleEdges = computed(() => {
+      const seenPairs = new Map();
+      routes.value.forEach(r => {
+        const key = [r.start_port_num, r.end_port_num].sort().join('-');
+        if (!seenPairs.has(key)) seenPairs.set(key, []);
+        seenPairs.get(key).push(r);
+      });
+      const edges = [];
+      seenPairs.forEach((rs, key) => {
+        rs.forEach((r, i) => {
+          const sn = nodeMap[r.start_port_num];
+          const en = nodeMap[r.end_port_num];
+          if (!sn || !en) return;
+          const offset = rs.length > 1 ? (i === 0 ? 4 : -4) : 0;
+          const coords = edgeCoords(sn, en, offset);
+          const style = edgeStyle(r.start_port_num, r.end_port_num);
+          const isConnected = hoveredId.value &&
+            (r.start_port_num === hoveredId.value || r.end_port_num === hoveredId.value);
+          const isSelected = selected.value &&
+            (r.start_port_num === selected.value.id || r.end_port_num === selected.value.id);
+          edges.push({
+            key: `${r.start_port_num}-${r.end_port_num}-${i}`,
+            ...coords,
+            ...style,
+            highlighted: isConnected || isSelected,
+            dimmed: hoveredId.value ? !isConnected : false,
+          });
+        });
+      });
+      return edges;
+    });
+
+    const nodeCount = computed(() => {
+      const ids = new Set();
+      routes.value.forEach(r => { ids.add(r.start_port_num); ids.add(r.end_port_num); });
+      return ids.size;
+    });
+
+    const hoveredName = computed(() => nodeMap[hoveredId.value]?.name || '');
+
+    const outRoutes = computed(() => {
+      if (!selected.value) return [];
+      return routes.value
+        .filter(r => r.start_port_num === selected.value.id)
+        .map(r => ({ end: r.end_port_num, endName: r.end_port_name }));
+    });
+
+    function onHover(node) { hoveredId.value = node.id; }
+    function onLeave() { hoveredId.value = null; }
+    function onSelect(node) {
+      selected.value = selected.value?.id === node.id ? null : node;
+    }
+
+    async function refresh(force = false) {
+      loading.value = true;
+      try {
+        const r = await http.get('/api/ports/?refresh=' + force);
+        routes.value = r.routes;
+        updatedAt.value = r.updated_at;
+      } catch (e) { ElMessage.error(e.message); } finally { loading.value = false; }
+    }
+
+    onMounted(() => refresh());
+
+    return {
+      routes, updatedAt, loading, showTable, hoveredId, selected,
+      svgW, svgH, nodes, visibleEdges, connectedIds, nodeCount,
+      hoveredName, outRoutes,
+      onHover, onLeave, onSelect, refresh, fmtDate,
+    };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 旅客管理视图
+// ══════════════════════════════════════════════════════════
+const PassengersView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>旅客管理</h3>
+      <el-button type="primary" @click="openForm()">+ 添加旅客</el-button>
+    </div>
+    <el-table :data="list" border stripe>
+      <el-table-column label="姓名" prop="name" />
+      <el-table-column label="证件类型" prop="id_type" width="130" />
+      <el-table-column label="证件号码" prop="id_number" />
+      <el-table-column label="手机号" prop="phone" width="130" />
+      <el-table-column label="备注" prop="remark" />
+      <el-table-column label="操作" width="140">
+        <template #default="{row}">
+          <el-button size="small" @click="openForm(row)">编辑</el-button>
+          <el-button size="small" type="danger" @click="del(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+    <el-dialog v-model="dlg" :title="editing ? '编辑旅客' : '添加旅客'" width="420px">
+      <el-form :model="form" label-width="80px">
+        <el-form-item label="姓名" required><el-input v-model="form.name" /></el-form-item>
+        <el-form-item label="证件类型">
+          <el-select v-model="form.id_type" style="width:100%">
+            <el-option value="身份证" /><el-option value="护照" />
+            <el-option value="港澳通行证" /><el-option value="台湾通行证" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="证件号" required><el-input v-model="form.id_number" /></el-form-item>
+        <el-form-item label="手机号"><el-input v-model="form.phone" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="form.remark" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dlg=false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+  `,
+  setup() {
+    const list = ref([]); const dlg = ref(false); const saving = ref(false);
+    const editing = ref(null);
+    const form = reactive({ name:"", id_type:"身份证", id_number:"", phone:"", remark:"" });
+    async function load() { list.value = await http.get("/api/passengers/"); }
+    function openForm(row = null) {
+      editing.value = row;
+      Object.assign(form, row || { name:"", id_type:"身份证", id_number:"", phone:"", remark:"" });
+      dlg.value = true;
+    }
+    async function save() {
+      saving.value = true;
+      try {
+        if (editing.value) await http.put(`/api/passengers/${editing.value.id}`, form);
+        else await http.post("/api/passengers/", form);
+        ElMessage.success("保存成功"); dlg.value = false; load();
+      } catch (e) { ElMessage.error(e.message); } finally { saving.value = false; }
+    }
+    async function del(row) {
+      await ElMessageBox.confirm(`删除旅客「${row.name}」？`, "确认", { type:"warning" });
+      await http.delete(`/api/passengers/${row.id}`);
+      ElMessage.success("已删除"); load();
+    }
+    onMounted(load);
+    return { list, dlg, saving, editing, form, openForm, save, del };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// Ferry 账号视图
+// ══════════════════════════════════════════════════════════
+const AccountsView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>Ferry 账号管理</h3>
+      <el-button type="primary" @click="openForm()">+ 添加账号</el-button>
+    </div>
+    <el-table :data="list" border stripe>
+      <el-table-column label="手机号" prop="phone" />
+      <el-table-column label="备注" prop="remark" />
+      <el-table-column label="上次登录">
+        <template #default="{row}">{{ fmtDate(row.last_login_at) }}</template>
+      </el-table-column>
+      <el-table-column label="会话有效期">
+        <template #default="{row}">
+          <el-tag :type="isExpired(row) ? 'danger' : 'success'" size="small">
+            {{ isExpired(row) ? '已过期' : fmtDate(row.session_expires_at) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="280">
+        <template #default="{row}">
+          <el-button size="small" @click="testLogin(row)" :loading="row._testing">测试登录</el-button>
+          <el-button size="small" type="success" @click="syncAccount(row)" :loading="row._syncing">同步</el-button>
+          <el-button size="small" @click="openForm(row)">编辑</el-button>
+          <el-button size="small" type="danger" @click="del(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+    <el-dialog v-model="dlg" :title="editing ? '编辑账号' : '添加账号'" width="400px">
+      <el-form :model="form" label-width="80px">
+        <el-form-item label="手机号" required><el-input v-model="form.phone" :disabled="!!editing" /></el-form-item>
+        <el-form-item label="密码" required>
+          <el-input v-model="form.password" type="password" show-password
+            :placeholder="editing ? '不修改请留空' : '请输入密码'" />
+        </el-form-item>
+        <el-form-item label="备注"><el-input v-model="form.remark" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dlg=false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+  `,
+  setup() {
+    const list = ref([]); const dlg = ref(false); const saving = ref(false);
+    const editing = ref(null);
+    const form = reactive({ phone:"", password:"", remark:"" });
+    async function load() {
+      list.value = (await http.get("/api/accounts/")).map(a => ({...a, _testing: false, _syncing: false}));
+    }
+    function isExpired(row) {
+      if (!row.session_expires_at) return true;
+      return new Date(row.session_expires_at) < new Date();
+    }
+    function openForm(row = null) {
+      editing.value = row;
+      Object.assign(form, row ? { phone: row.phone, password:"", remark: row.remark } : { phone:"", password:"", remark:"" });
+      dlg.value = true;
+    }
+    async function save() {
+      saving.value = true;
+      try {
+        if (editing.value) await http.put(`/api/accounts/${editing.value.id}`, form);
+        else {
+          await http.post("/api/accounts/", form);
+          ElMessage.info("账号已添加，正在后台同步联系人和车辆...");
+        }
+        ElMessage.success("保存成功"); dlg.value = false; load();
+      } catch (e) { ElMessage.error(e.message); } finally { saving.value = false; }
+    }
+    async function del(row) {
+      await ElMessageBox.confirm(`删除账号 ${row.phone}？`, "确认", { type:"warning" });
+      await http.delete(`/api/accounts/${row.id}`);
+      ElMessage.success("已删除"); load();
+    }
+    async function testLogin(row) {
+      row._testing = true;
+      try {
+        const r = await http.post(`/api/accounts/${row.id}/test-login`);
+        if (r.success) ElMessage.success(r.message); else ElMessage.error(r.message);
+        load();
+      } catch (e) { ElMessage.error(e.message); } finally { row._testing = false; }
+    }
+    async function syncAccount(row) {
+      row._syncing = true;
+      try {
+        const r = await http.post(`/api/accounts/${row.id}/sync`);
+        ElMessage.success(
+          `同步完成：联系人 +${r.passengers_added} 跳过${r.passengers_skipped}，` +
+          `车辆 +${r.vehicles_added} 跳过${r.vehicles_skipped}` +
+          (r.errors?.length ? `，警告: ${r.errors.join('; ')}` : "")
+        );
+      } catch (e) { ElMessage.error(e.message); } finally { row._syncing = false; }
+    }
+    onMounted(load);
+    return { list, dlg, saving, editing, form, openForm, save, del, testLogin, syncAccount, isExpired, fmtDate };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 车辆管理视图
+// ══════════════════════════════════════════════════════════
+const VehiclesView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>车辆管理</h3>
+      <el-button type="primary" @click="openForm()">+ 添加车辆</el-button>
+    </div>
+    <el-table :data="list" border stripe>
+      <el-table-column label="车牌号" prop="plate_number" width="130" />
+      <el-table-column label="车型" prop="vehicle_type" />
+      <el-table-column label="车主姓名" prop="owner_name" width="120" />
+      <el-table-column label="备注" prop="remark" />
+      <el-table-column label="操作" width="140">
+        <template #default="{row}">
+          <el-button size="small" @click="openForm(row)">编辑</el-button>
+          <el-button size="small" type="danger" @click="del(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+    <el-dialog v-model="dlg" :title="editing ? '编辑车辆' : '添加车辆'" width="420px">
+      <el-form :model="form" label-width="80px">
+        <el-form-item label="车牌号" required>
+          <el-input v-model="form.plate_number" :disabled="!!editing" placeholder="例：浙A12345" />
+        </el-form-item>
+        <el-form-item label="车型">
+          <el-input v-model="form.vehicle_type" placeholder="例：小型汽车" />
+        </el-form-item>
+        <el-form-item label="车主姓名">
+          <el-input v-model="form.owner_name" />
+        </el-form-item>
+        <el-form-item label="备注"><el-input v-model="form.remark" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dlg=false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+  `,
+  setup() {
+    const list = ref([]); const dlg = ref(false); const saving = ref(false);
+    const editing = ref(null);
+    const form = reactive({ plate_number:"", vehicle_type:"", owner_name:"", remark:"" });
+    async function load() { list.value = await http.get("/api/vehicles/"); }
+    function openForm(row = null) {
+      editing.value = row;
+      Object.assign(form, row || { plate_number:"", vehicle_type:"", owner_name:"", remark:"" });
+      dlg.value = true;
+    }
+    async function save() {
+      if (!form.plate_number) return ElMessage.warning("请输入车牌号");
+      saving.value = true;
+      try {
+        if (editing.value) await http.put(`/api/vehicles/${editing.value.id}`, form);
+        else await http.post("/api/vehicles/", form);
+        ElMessage.success("保存成功"); dlg.value = false; load();
+      } catch (e) { ElMessage.error(e.message); } finally { saving.value = false; }
+    }
+    async function del(row) {
+      await ElMessageBox.confirm(`删除车辆「${row.plate_number}」？`, "确认", { type:"warning" });
+      await http.delete(`/api/vehicles/${row.id}`);
+      ElMessage.success("已删除"); load();
+    }
+    onMounted(load);
+    return { list, dlg, saving, editing, form, openForm, save, del };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 用户管理视图（admin only）
+// ══════════════════════════════════════════════════════════
+const UsersView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>系统用户管理</h3>
+      <el-button type="primary" @click="openForm()">+ 创建用户</el-button>
+    </div>
+    <el-table :data="list" border stripe>
+      <el-table-column label="用户名" prop="username" />
+      <el-table-column label="角色" width="100">
+        <template #default="{row}">
+          <el-tag :type="row.role==='admin' ? 'danger' : 'primary'" size="small">{{ row.role }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="100">
+        <template #default="{row}">
+          <el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? '正常' : '已禁用' }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="创建时间">
+        <template #default="{row}">{{ fmtDate(row.created_at) }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="200">
+        <template #default="{row}">
+          <el-button size="small" @click="openForm(row)">编辑</el-button>
+          <el-button size="small" :type="row.is_active ? 'warning' : 'success'"
+            @click="toggleActive(row)" :disabled="row.username==='admin'">
+            {{ row.is_active ? '禁用' : '启用' }}
+          </el-button>
+          <el-button size="small" type="danger" @click="del(row)" :disabled="row.username==='admin'">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+    <el-dialog v-model="dlg" :title="editing ? '编辑用户' : '创建用户'" width="380px">
+      <el-form :model="form" label-width="70px">
+        <el-form-item label="用户名" required><el-input v-model="form.username" :disabled="!!editing" /></el-form-item>
+        <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password
+          :placeholder="editing ? '不修改请留空' : '设置密码'" /></el-form-item>
+        <el-form-item label="角色">
+          <el-radio-group v-model="form.role">
+            <el-radio value="user">普通用户</el-radio>
+            <el-radio value="admin">管理员</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dlg=false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+  `,
+  setup() {
+    const list = ref([]); const dlg = ref(false); const saving = ref(false); const editing = ref(null);
+    const form = reactive({ username:"", password:"", role:"user" });
+    async function load() { list.value = await http.get("/api/users/"); }
+    function openForm(row = null) {
+      editing.value = row;
+      Object.assign(form, row ? { username: row.username, password:"", role: row.role } : { username:"", password:"", role:"user" });
+      dlg.value = true;
+    }
+    async function save() {
+      saving.value = true;
+      try {
+        if (editing.value) await http.put(`/api/users/${editing.value.id}`, form);
+        else await http.post("/api/users/", form);
+        ElMessage.success("保存成功"); dlg.value = false; load();
+      } catch (e) { ElMessage.error(e.message); } finally { saving.value = false; }
+    }
+    async function toggleActive(row) {
+      await http.put(`/api/users/${row.id}`, { is_active: !row.is_active });
+      load();
+    }
+    async function del(row) {
+      await ElMessageBox.confirm(`删除用户 ${row.username}？`, "确认", { type:"warning" });
+      await http.delete(`/api/users/${row.id}`); load();
+    }
+    onMounted(load);
+    return { list, dlg, saving, editing, form, openForm, save, toggleActive, del, fmtDate };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 系统设置视图
+// ══════════════════════════════════════════════════════════
+const SettingsView = {
+  emits: ["saved"],
+  template: `
+  <div style="max-width:560px">
+    <div class="page-header"><h3>系统设置</h3></div>
+    <el-card style="margin-bottom:20px">
+      <template #header>Selenium 配置</template>
+      <el-form :model="form" label-width="130px">
+        <el-form-item label="Selenium 地址">
+          <el-input v-model="form.selenium_url" placeholder="http://192.168.1.117:14444/wd/hub" />
+        </el-form-item>
+      </el-form>
+    </el-card>
+    <el-card style="margin-bottom:20px">
+      <template #header>爬虫模式</template>
+      <el-form :model="form" label-width="130px">
+        <el-form-item label="后端类型">
+          <el-radio-group v-model="form.crawler_backend">
+            <el-radio value="api">直连 API 模式（推荐）</el-radio>
+            <el-radio value="selenium">Selenium 浏览器模式</el-radio>
+          </el-radio-group>
+          <div style="margin-top:6px;color:#888;font-size:13px">
+            直连 API：无需 Selenium Grid，速度快；Selenium：支持验证码等复杂场景（购票仍需 Selenium）
+          </div>
+        </el-form-item>
+      </el-form>
+    </el-card>
+    <el-card style="margin-bottom:20px">
+      <template #header>Bark 推送</template>
+      <el-form :model="form" label-width="130px">
+        <el-form-item label="Bark Key"><el-input v-model="form.bark_key" placeholder="留空则不推送" /></el-form-item>
+        <el-form-item label="Bark Server"><el-input v-model="form.bark_server" /></el-form-item>
+      </el-form>
+    </el-card>
+    <el-card>
+      <template #header>修改登录密码</template>
+      <el-form :model="pwdForm" label-width="130px">
+        <el-form-item label="新密码"><el-input v-model="pwdForm.password" type="password" show-password /></el-form-item>
+        <el-form-item>
+          <el-button type="warning" :loading="pwdSaving" @click="savePwd">修改密码</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+    <div style="margin-top:20px">
+      <el-button type="primary" :loading="saving" @click="save">保存设置</el-button>
+    </div>
+  </div>
+  `,
+  setup(_, { emit }) {
+    const form = reactive({ selenium_url:"", bark_key:"", bark_server:"", crawler_backend:"api" });
+    const pwdForm = reactive({ password:"" });
+    const saving = ref(false); const pwdSaving = ref(false);
+    async function load() { Object.assign(form, await http.get("/api/settings/")); }
+    async function save() {
+      saving.value = true;
+      try { await http.put("/api/settings/", form); ElMessage.success("设置已保存"); emit("saved"); }
+      catch (e) { ElMessage.error(e.message); } finally { saving.value = false; }
+    }
+    async function savePwd() {
+      if (!pwdForm.password) return ElMessage.warning("密码不能为空");
+      pwdSaving.value = true;
+      try { await http.put("/api/auth/me/password", pwdForm); ElMessage.success("密码已修改"); pwdForm.password = ""; }
+      catch (e) { ElMessage.error(e.message); } finally { pwdSaving.value = false; }
+    }
+    onMounted(load);
+    return { form, pwdForm, saving, pwdSaving, save, savePwd };
+  }
+};
+
+// ──────────────────────────────────────────────────────────
+const app = createApp(App);
+app.use(ElementPlus, { locale: ElementPlus.zhCn || ElementPlus.lang?.zhCn });
+for (const [name, comp] of Object.entries(ElementPlusIconsVue)) {
+  app.component(name, comp);
+}
+app.component("TasksView", TasksView);
+app.component("PortsView", PortsView);
+app.component("PassengersView", PassengersView);
+app.component("VehiclesView", VehiclesView);
+app.component("AccountsView", AccountsView);
+app.component("UsersView", UsersView);
+app.component("SettingsView", SettingsView);
+app.mount("#app");
+</script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+# Selenium Grid 4 + Chrome 节点（带 Xvfb + VNC）
+# 启动：docker compose -f docker/docker-compose.yml up -d
+# VNC 客户端连接：192.168.1.117:5900（无密码）
+# noVNC 浏览器访问：http://192.168.1.117:7900
+# Hub API / WebDriver：http://192.168.1.117:14444
+
+services:
+  selenium-hub:
+    image: selenium/hub:4.26.0
+    container_name: selenium-hub
+    ports:
+      - "14444:4444"   # WebDriver 入口（保持与系统配置一致）
+      - "4442:4442"    # 事件总线发布
+      - "4443:4443"    # 事件总线订阅
+
+  selenium-chrome:
+    image: selenium/node-chrome:4.26.0
+    container_name: selenium-chrome
+    depends_on:
+      - selenium-hub
+    shm_size: "2gb"    # 避免 /dev/shm 不足导致 Chrome 崩溃
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=3
+      - SE_NODE_SESSION_TIMEOUT=300
+      # Xvfb 虚拟显示器 —— 必须为 true，否则非 headless 模式下 Chrome 无法启动
+      - SE_START_XVFB=true
+      - SE_SCREEN_WIDTH=1920
+      - SE_SCREEN_HEIGHT=1080
+      - SE_SCREEN_DEPTH=24
+      - SE_SCREEN_DPI=96
+      # VNC（TigerVNC 客户端连接端口 5900，无密码）
+      - SE_VNC_NO_PASSWORD=1
+      - SE_VNC_PORT=5900
+      # noVNC（浏览器访问端口 7900）
+      - SE_NO_VNC_PORT=7900
+    ports:
+      - "5900:5900"    # VNC
+      - "7900:7900"    # noVNC（浏览器直接看）

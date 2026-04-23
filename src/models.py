@@ -1,0 +1,118 @@
+"""SQLAlchemy ORM 模型定义"""
+import json
+from datetime import datetime
+from sqlalchemy import (
+    Column, Integer, String, Boolean, DateTime, Text, ForeignKey
+)
+from sqlalchemy.orm import relationship
+from src.database import Base
+
+
+class SystemUser(Base):
+    __tablename__ = "system_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(64), unique=True, nullable=False, index=True)
+    password_hash = Column(String(128), nullable=False)
+    role = Column(String(16), nullable=False, default="user")  # admin / user
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FerryAccount(Base):
+    __tablename__ = "ferry_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    phone = Column(String(20), unique=True, nullable=False)
+    password_enc = Column(Text, nullable=False)       # Fernet 加密
+    cookies_json = Column(Text, default="[]")         # JSON list
+    local_storage_json = Column(Text, default="{}")   # JSON object
+    session_expires_at = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+    remark = Column(String(128), default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    tasks = relationship("Task", back_populates="account")
+
+
+class Passenger(Base):
+    __tablename__ = "passengers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(64), nullable=False)
+    id_type = Column(String(32), nullable=False, default="身份证")  # 身份证/护照/港澳通行证/台湾通行证
+    id_number = Column(String(64), nullable=False)
+    phone = Column(String(20), nullable=True)
+    remark = Column(String(128), default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    account_id = Column(Integer, ForeignKey("ferry_accounts.id"), nullable=False)
+    departure_num = Column(Integer, nullable=False)
+    departure_name = Column(String(64), nullable=False)
+    destination_num = Column(Integer, nullable=False)
+    destination_name = Column(String(64), nullable=False)
+    travel_date = Column(String(16), nullable=False)  # YYYY-MM-DD
+    ticket_type = Column(String(32), nullable=False, default="旅客")  # 旅客 / 小客车及随车人员
+    seat_class = Column(String(32), nullable=False, default="")     # 舱位偏好，空字符串=不限
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)  # 小客车票时选填
+    passenger_ids = Column(Text, default="[]")  # JSON list of passenger IDs
+    trigger_type = Column(String(16), nullable=False, default="poll")  # poll / schedule
+    trigger_value = Column(String(64), nullable=False)  # poll: 间隔秒数; schedule: ISO datetime
+    status = Column(String(16), default="pending")  # pending/running/booked/failed/stopped
+    created_by = Column(Integer, ForeignKey("system_users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    account = relationship("FerryAccount", back_populates="tasks")
+    logs = relationship("TaskLog", back_populates="task", cascade="all, delete-orphan")
+
+    @property
+    def passenger_ids_list(self):
+        return json.loads(self.passenger_ids or "[]")
+
+
+class TaskLog(Base):
+    __tablename__ = "task_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    level = Column(String(8), default="INFO")  # INFO / WARN / ERROR
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="logs")
+
+
+class PortsCache(Base):
+    __tablename__ = "ports_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    start_port_num = Column(Integer, nullable=False)
+    start_port_name = Column(String(64), nullable=False)
+    end_port_num = Column(Integer, nullable=False)
+    end_port_name = Column(String(64), nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Vehicle(Base):
+    __tablename__ = "vehicles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plate_number = Column(String(32), nullable=False, unique=True)  # 去重键
+    vehicle_type = Column(String(64), nullable=False, default="")   # 车型
+    owner_name = Column(String(64), nullable=False, default="")     # 车主姓名
+    remark = Column(String(128), default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, default="")

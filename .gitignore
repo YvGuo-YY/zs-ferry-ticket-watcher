@@ -1,0 +1,5 @@
+/.idea
+/.venv
+/page-data/
+/tmp.precommit.gitignore
+/weread-challenge.js
