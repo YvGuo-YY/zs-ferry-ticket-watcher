@@ -68,6 +68,32 @@ def _bg_delete_vehicle(plate_number: str):
         db.close()
 
 
+@router.post("/sync-all")
+def sync_all_vehicles(
+    db: Session = Depends(get_db),
+    _: SystemUser = Depends(get_current_user),
+):
+    """从所有 Ferry 账号拉取常用车辆并合并到本地（去重）"""
+    from src.models import FerryAccount
+    from src.crawler.factory import get_backend
+    accounts = db.query(FerryAccount).all()
+    if not accounts:
+        return {"vehicles_added": 0, "vehicles_skipped": 0, "errors": ["没有 Ferry 账号"]}
+    total_added = 0
+    total_skipped = 0
+    errors = []
+    backend = get_backend(db)
+    for acc in accounts:
+        try:
+            result = backend.sync_profile(acc, db)
+            total_added += result.get("vehicles_added", 0)
+            total_skipped += result.get("vehicles_skipped", 0)
+            errors.extend(result.get("errors", []))
+        except Exception as e:
+            errors.append(f"{acc.phone}: {e}")
+    return {"vehicles_added": total_added, "vehicles_skipped": total_skipped, "errors": errors}
+
+
 @router.get("/", response_model=list[VehicleOut])
 def list_vehicles(
     db: Session = Depends(get_db),

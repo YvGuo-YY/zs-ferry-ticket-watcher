@@ -30,7 +30,7 @@ def get_db():
 
 def init_db():
     """创建全部表，并初始化默认数据"""
-    from src.models import SystemUser, Setting, Vehicle  # noqa: F401 触发模型注册
+    from src.models import SystemUser, Setting, Vehicle, Order  # noqa: F401 触发模型注册
     Base.metadata.create_all(bind=engine)
     _migrate()
     _seed_defaults()
@@ -43,6 +43,11 @@ def _migrate():
         for ddl in [
             "ALTER TABLE tasks ADD COLUMN seat_class VARCHAR(32) NOT NULL DEFAULT ''",
             "ALTER TABLE tasks ADD COLUMN vehicle_id INTEGER REFERENCES vehicles(id)",
+            "ALTER TABLE tasks ADD COLUMN sail_time_from VARCHAR(8) NOT NULL DEFAULT ''",
+            "ALTER TABLE tasks ADD COLUMN sail_time_to VARCHAR(8) NOT NULL DEFAULT ''",
+            "ALTER TABLE passengers ADD COLUMN remote_ids_json TEXT DEFAULT '{}'",
+            "ALTER TABLE vehicles ADD COLUMN remote_ids_json TEXT DEFAULT '{}'",
+            "ALTER TABLE tasks ADD COLUMN driver_passenger_id INTEGER REFERENCES passengers(id)",
         ]:
             try:
                 conn.execute(__import__("sqlalchemy").text(ddl))

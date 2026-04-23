@@ -143,6 +143,7 @@ const http = {
   get:    (p)       => api("GET",    p),
   post:   (p, b)    => api("POST",   p, b),
   put:    (p, b)    => api("PUT",    p, b),
+  patch:  (p, b)    => api("PATCH",  p, b),
   delete: (p)       => api("DELETE", p),
 };
 
@@ -219,6 +220,8 @@ const App = {
       </div>
       <div class="content">
         <tasks-view     v-if="view==='tasks'"      ref="tasksRef" />
+        <orders-view    v-if="view==='orders'"     />
+        <trips-view     v-if="view==='trips'"      />
         <ports-view     v-if="view==='ports'"      />
         <passengers-view v-if="view==='passengers'" />
         <vehicles-view  v-if="view==='vehicles'"   />
@@ -242,7 +245,9 @@ const App = {
     const navItems = computed(() => {
       const items = [
         { view: "tasks",      icon: "🎫", label: "抢票任务" },
-        { view: "ports",      icon: "🔍", label: "港口航线" },
+        { view: "orders",     icon: "📋", label: "订单列表" },
+        { view: "trips",      icon: "🔎", label: "余票查询" },
+        { view: "ports",      icon: "🗺️", label: "港口航线" },
         { view: "passengers", icon: "👥", label: "旅客管理" },
         { view: "vehicles",   icon: "🚗", label: "车辆管理" },
         { view: "accounts",   icon: "🔑", label: "Ferry 账号" },
@@ -322,7 +327,7 @@ const TasksView = {
         <div class="task-meta">
           <div class="task-meta-item">日期：<span>{{ t.travel_date }}</span></div>
           <div class="task-meta-item">票种：<span>{{ t.ticket_type }}</span></div>
-          <div class="task-meta-item" v-if="t.seat_class">舱位：<span>{{ t.seat_class }}</span></div>
+          <div class="task-meta-item" v-if="t.seat_classes && t.seat_classes.length">舱位：<span>{{ t.seat_classes.join(' / ') }}</span></div>
           <div class="task-meta-item" v-if="t.vehicle_id">车牌：<span>{{ vehicles.find(v=>v.id===t.vehicle_id)?.plate_number || t.vehicle_id }}</span></div>
           <div class="task-meta-item">触发：<span>{{ triggerLabel(t) }}</span></div>
           <div class="task-meta-item">创建：<span>{{ fmtDate(t.created_at) }}</span></div>
@@ -371,7 +376,7 @@ const TasksView = {
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.ticket_type==='\u5c0f\u5ba2\u8f66\u53ca\u968f\u8f66\u4eba\u5458'" label="车辆" required>
-          <el-select v-model="form.vehicle_id" placeholder="选择车辆" style="width:100%" clearable>
+          <el-select v-model="form.vehicle_id" placeholder="选择车辆" style="width:100%" clearable @change="form.driver_passenger_id=null">
             <el-option v-for="v in vehicles" :key="v.id"
               :label="v.plate_number + (v.owner_name ? ' — ' + v.owner_name : '') + (v.vehicle_type ? ' (' + v.vehicle_type + ')' : '')"
               :value="v.id" />
@@ -380,14 +385,33 @@ const TasksView = {
             请先在“车辆管理”中添加车辆
           </div>
         </el-form-item>
-        <el-form-item label="舱位偏好">
-          <el-select v-model="form.seat_class" placeholder="不限（任意有票舱位）" clearable style="width:100%">
-            <el-option label="不限" value="" />
-            <el-option label="上舱" value="上舱" />
-            <el-option label="中舱" value="中舱" />
-            <el-option label="下前舱" value="下前舱" />
-            <el-option label="下舱卧" value="下舱卧" />
+        <el-form-item v-if="form.ticket_type==='\u5c0f\u5ba2\u8f66\u53ca\u968f\u8f66\u4eba\u5458' && form.vehicle_id" label="驾驶员" required>
+          <el-select v-model="form.driver_passenger_id" placeholder="从已选旅客中选择驾驶员" style="width:100%">
+            <el-option v-for="p in passengers.filter(p=>form.passenger_ids.includes(p.id))" :key="p.id"
+              :label="p.name + '（' + p.id_type + '：' + p.id_number + '）'"
+              :value="p.id" />
           </el-select>
+          <div style="font-size:12px;color:#aaa;margin-top:2px">驾驶员条目将使用车辆舱位，车牌填入该旅客名下</div>
+        </el-form-item>
+        <el-form-item label="舱位偏好">
+          <el-checkbox-group v-model="form.seat_classes">
+            <el-checkbox value="上舱">上舱</el-checkbox>
+            <el-checkbox value="中舱">中舱</el-checkbox>
+            <el-checkbox value="下前舱">下前舱</el-checkbox>
+            <el-checkbox value="下舱卧">下舱卧</el-checkbox>
+            <el-checkbox value="商务B">商务B</el-checkbox>
+          </el-checkbox-group>
+          <div style="font-size:12px;color:#aaa;margin-top:2px">不勾选则任意舱位有票即抢</div>
+        </el-form-item>
+        <el-form-item label="开航时段">
+          <div style="display:flex;align-items:center;gap:8px">
+            <el-time-picker v-model="sailTimeFrom" placeholder="不限起始"
+              value-format="HH:mm" format="HH:mm" style="width:110px" clearable />
+            <span style="color:#aaa">—</span>
+            <el-time-picker v-model="sailTimeTo" placeholder="不限截止"
+              value-format="HH:mm" format="HH:mm" style="width:110px" clearable />
+          </div>
+          <div style="font-size:12px;color:#aaa;margin-top:2px">不填则不限开航时段</div>
         </el-form-item>
         <el-form-item label="旅客" required>
           <div style="width:100%">
@@ -403,12 +427,9 @@ const TasksView = {
         </el-form-item>
         <el-form-item label="触发方式" required>
           <el-radio-group v-model="form.trigger_type">
-            <el-radio value="poll">立即轮询</el-radio>
+            <el-radio value="poll">随机轮询（1~10s）</el-radio>
             <el-radio value="schedule">定时开售</el-radio>
           </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="form.trigger_type==='poll'" label="间隔(秒)">
-          <el-input-number v-model="pollInterval" :min="5" :max="300" />
         </el-form-item>
         <el-form-item v-if="form.trigger_type==='schedule'" label="触发时间">
           <el-date-picker v-model="scheduleTime" type="datetime" placeholder="选择开售时间"
@@ -459,15 +480,19 @@ const TasksView = {
 
     const departureNum = ref(null);
     const destinationNum = ref(null);
-    const pollInterval = ref(10);
     const scheduleTime = ref("");
+    const sailTimeFrom = ref("");
+    const sailTimeTo = ref("");
 
     const form = reactive({
       account_id: null,
       travel_date: "",
       ticket_type: "旅客",
-      seat_class: "",
+      seat_classes: [],
+      sail_time_from: "",
+      sail_time_to: "",
       vehicle_id: null,
+      driver_passenger_id: null,
       passenger_ids: [],
       trigger_type: "poll",
     });
@@ -507,11 +532,15 @@ const TasksView = {
       form.account_id = null;
       form.travel_date = "";
       form.ticket_type = "旅客";
-      form.seat_class = "";
+      form.seat_classes = [];
+      form.sail_time_from = "";
+      form.sail_time_to = "";
       form.vehicle_id = null;
+      form.driver_passenger_id = null;
       form.passenger_ids = [];
       form.trigger_type = "poll";
-      pollInterval.value = 10;
+      sailTimeFrom.value = "";
+      sailTimeTo.value = "";
       createDrawer.value = true;
     }
 
@@ -523,12 +552,12 @@ const TasksView = {
       if (!form.passenger_ids.length) return ElMessage.warning("请选择至少一名旅客");
       if (form.ticket_type === "小客车及随车人员" && !form.vehicle_id)
         return ElMessage.warning("小客车票请选择车辆");
+      if (form.ticket_type === "小客车及随车人员" && form.vehicle_id && !form.driver_passenger_id)
+        return ElMessage.warning("小客车票请指定驾驶员");
 
       const dep = departurePorts.value.find(p => p.num === departureNum.value);
       const dst = destinationPorts.value.find(p => p.num === destinationNum.value);
-      const trigVal = form.trigger_type === "poll"
-        ? String(pollInterval.value)
-        : scheduleTime.value;
+      const trigVal = form.trigger_type === "poll" ? "" : scheduleTime.value;
 
       creating.value = true;
       try {
@@ -539,7 +568,8 @@ const TasksView = {
           destination_num: destinationNum.value,
           destination_name: dst?.name || "",
           trigger_value: trigVal,
-          seat_class: form.seat_class,
+          sail_time_from: sailTimeFrom.value || "",
+          sail_time_to: sailTimeTo.value || "",
         });
         await http.post(`/api/tasks/${task.id}/start`);
         ElMessage.success("任务已创建并启动");
@@ -599,16 +629,208 @@ const TasksView = {
     watch(logDrawer, v => { if (!v && wsConn) { wsConn.close(); wsConn = null; } });
 
     function triggerLabel(t) {
-      return t.trigger_type === "poll" ? `每 ${t.trigger_value}s 轮询` : `定时 ${t.trigger_value}`;
+      return t.trigger_type === "poll" ? `随机轮询(1~10s)` : `定时 ${t.trigger_value}`;
     }
 
     onMounted(load);
 
     return { tasks, accounts, passengers, vehicles, routes, createDrawer, logDrawer, creating,
              logTask, logs, logEl, form, departureNum, destinationNum, departurePorts,
-             destinationPorts, pollInterval, scheduleTime, onDepartureChange,
+             destinationPorts, scheduleTime, sailTimeFrom, sailTimeTo, onDepartureChange,
              disablePassedDate, openCreate, submitCreate, startTask, stopTask,
              deleteTask, openLogs, logTitle, triggerLabel, fmtDate, statusLabel, statusType };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 余票查询视图
+// ══════════════════════════════════════════════════════════
+const TripsView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>余票查询</h3>
+    </div>
+
+    <!-- 查询条件 -->
+    <el-card style="margin-bottom:20px">
+      <el-form :model="query" inline label-width="90px" @submit.prevent="doQuery">
+        <el-form-item label="Ferry账号">
+          <el-select v-model="query.account_id" placeholder="选择账号" style="width:180px">
+            <el-option v-for="a in accounts" :key="a.id"
+              :label="a.phone + (a.remark ? ' (' + a.remark + ')' : '')" :value="a.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="出发港">
+          <el-select v-model="query.start_port_no" placeholder="出发港" style="width:160px" @change="onDepartureChange">
+            <el-option v-for="p in departurePorts" :key="p.num" :label="p.name" :value="p.num" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="到达港">
+          <el-select v-model="query.end_port_no" placeholder="先选出发港" style="width:160px" :disabled="!query.start_port_no">
+            <el-option v-for="p in destinationPorts" :key="p.num" :label="p.name" :value="p.num" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="日期">
+          <el-date-picker v-model="query.date" type="date" placeholder="选择日期"
+            value-format="YYYY-MM-DD" style="width:150px" :disabled-date="isDateDisabled" />
+          <span v-if="saleDate" style="margin-left:8px;font-size:12px;color:#888">可购至 {{ saleDate }}</span>
+          <span v-if="saleDateLoading" style="margin-left:8px;font-size:12px;color:#aaa">查询中...</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="loading" @click="doQuery" native-type="submit">查询</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- 结果 -->
+    <div v-if="queried">
+      <div v-if="trips.length === 0" style="text-align:center;padding:40px;color:#999">
+        该日期暂无班次
+      </div>
+      <el-table v-else :data="trips" border stripe>
+        <el-table-column label="船名" prop="shipName" width="110" />
+        <el-table-column label="航线" prop="lineName" width="120" />
+        <el-table-column label="开航时间" width="90">
+          <template #default="{row}">{{ row.sailTime }}</template>
+        </el-table-column>
+        <el-table-column label="旅客舱位" min-width="200">
+          <template #default="{row}">
+            <span v-if="!row.seatClasses || row.seatClasses.length === 0" style="color:#aaa">—</span>
+            <el-tag v-for="sc in row.seatClasses" :key="sc.classNum"
+              style="margin:2px"
+              :type="seatTagType(sc.totalCount)">
+              {{ sc.className }}
+              <template v-if="sc.totalCount > 0">：{{ sc.totalCount }} 张 ¥{{ sc.totalPrice }}</template>
+              <template v-else>：售罄</template>
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="车辆舱位" min-width="160">
+          <template #default="{row}">
+            <span v-if="!row.driverSeatClass || row.driverSeatClass.length === 0" style="color:#aaa">—</span>
+            <el-tag v-for="dc in row.driverSeatClass" :key="dc.classNum"
+              style="margin:2px"
+              :type="seatTagType(dc.totalCount)">
+              {{ dc.className }}
+              <template v-if="dc.totalCount > 0">：{{ dc.totalCount }} 辆 ¥{{ dc.totalPrice }}</template>
+              <template v-else>：售罄</template>
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="航班类型" width="110" prop="hxlxm" />
+        <el-table-column label="状态" width="90">
+          <template #default="{row}">
+            <el-tag :type="row.onSale ? 'success' : 'danger'" size="small">
+              {{ row.onSale ? '在售' : row.offSaleMsg || '未开售' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </div>
+  `,
+  setup() {
+    const accounts = ref([]);
+    const routes = ref([]);
+    const trips = ref([]);
+    const loading = ref(false);
+    const queried = ref(false);
+    const saleDate = ref(null);       // "YYYY-MM-DD" 最远可购票日
+    const saleDateLoading = ref(false);
+
+    const query = reactive({
+      account_id: null,
+      start_port_no: null,
+      end_port_no: null,
+      date: new Date().toLocaleDateString("sv"),  // YYYY-MM-DD format
+    });
+
+    const departurePorts = computed(() => {
+      const seen = new Set();
+      return routes.value
+        .filter(r => { const ok = !seen.has(r.start_port_num); seen.add(r.start_port_num); return ok; })
+        .map(r => ({ num: r.start_port_num, name: r.start_port_name }));
+    });
+
+    const destinationPorts = computed(() => {
+      if (!query.start_port_no) return [];
+      return routes.value
+        .filter(r => r.start_port_num === query.start_port_no)
+        .map(r => ({ num: r.end_port_num, name: r.end_port_name }));
+    });
+
+    function onDepartureChange() { query.end_port_no = null; }
+
+    async function loadSaleDate(accountId) {
+      if (!accountId) { saleDate.value = null; return; }
+      saleDateLoading.value = true;
+      try {
+        const r = await http.get(`/api/trips/sale-date?account_id=${accountId}`);
+        saleDate.value = r.sale_date || null;
+      } catch { saleDate.value = null; }
+      finally { saleDateLoading.value = false; }
+    }
+
+    function isDateDisabled(d) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      if (d < today) return true;
+      if (saleDate.value) {
+        const max = new Date(saleDate.value); max.setHours(23, 59, 59, 999);
+        if (d > max) return true;
+      }
+      return false;
+    }
+
+    function seatTagType(count) {
+      if (count <= 0) return "danger";
+      if (count <= 5) return "warning";
+      return "success";
+    }
+
+    async function load() {
+      try {
+        [accounts.value] = await Promise.all([http.get("/api/accounts/")]);
+        if (accounts.value.length) {
+          query.account_id = accounts.value[0].id;
+          loadSaleDate(query.account_id);
+        }
+      } catch {}
+      try {
+        const r = await http.get("/api/ports/");
+        routes.value = r.routes;
+      } catch {}
+    }
+
+    watch(() => query.account_id, (id) => loadSaleDate(id));
+
+    async function doQuery() {
+      if (!query.account_id) return ElMessage.warning("请选择 Ferry 账号");
+      if (!query.start_port_no) return ElMessage.warning("请选择出发港");
+      if (!query.end_port_no) return ElMessage.warning("请选择到达港");
+      if (!query.date) return ElMessage.warning("请选择日期");
+      loading.value = true;
+      queried.value = false;
+      try {
+        const res = await http.post("/api/trips/query", {
+          account_id: query.account_id,
+          start_port_no: query.start_port_no,
+          end_port_no: query.end_port_no,
+          date: query.date,
+        });
+        trips.value = res.trips || [];
+        queried.value = true;
+      } catch (e) {
+        ElMessage.error(e.message);
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    onMounted(load);
+
+    return { accounts, routes, trips, loading, queried, query, saleDate, saleDateLoading,
+             departurePorts, destinationPorts, onDepartureChange, seatTagType, isDateDisabled, doQuery };
   }
 };
 
@@ -922,7 +1144,10 @@ const PassengersView = {
   <div>
     <div class="page-header">
       <h3>旅客管理</h3>
-      <el-button type="primary" @click="openForm()">+ 添加旅客</el-button>
+      <div style="display:flex;gap:8px">
+        <el-button type="success" :loading="syncing" @click="syncAll">从Ferry账号同步</el-button>
+        <el-button type="primary" @click="openForm()">+ 添加旅客</el-button>
+      </div>
     </div>
     <el-table :data="list" border stripe>
       <el-table-column label="姓名" prop="name" />
@@ -959,6 +1184,7 @@ const PassengersView = {
   `,
   setup() {
     const list = ref([]); const dlg = ref(false); const saving = ref(false);
+    const syncing = ref(false);
     const editing = ref(null);
     const form = reactive({ name:"", id_type:"身份证", id_number:"", phone:"", remark:"" });
     async function load() { list.value = await http.get("/api/passengers/"); }
@@ -980,8 +1206,19 @@ const PassengersView = {
       await http.delete(`/api/passengers/${row.id}`);
       ElMessage.success("已删除"); load();
     }
+    async function syncAll() {
+      syncing.value = true;
+      try {
+        const r = await http.post("/api/passengers/sync-all");
+        ElMessage.success(
+          `同步完成：新增 ${r.passengers_added} 条，跳过 ${r.passengers_skipped} 条` +
+          (r.errors?.length ? `，警告: ${r.errors.join('; ')}` : "")
+        );
+        load();
+      } catch (e) { ElMessage.error(e.message); } finally { syncing.value = false; }
+    }
     onMounted(load);
-    return { list, dlg, saving, editing, form, openForm, save, del };
+    return { list, dlg, saving, syncing, editing, form, openForm, save, del, syncAll };
   }
 };
 
@@ -1097,7 +1334,10 @@ const VehiclesView = {
   <div>
     <div class="page-header">
       <h3>车辆管理</h3>
-      <el-button type="primary" @click="openForm()">+ 添加车辆</el-button>
+      <div style="display:flex;gap:8px">
+        <el-button type="success" :loading="syncing" @click="syncAll">从Ferry账号同步</el-button>
+        <el-button type="primary" @click="openForm()">+ 添加车辆</el-button>
+      </div>
     </div>
     <el-table :data="list" border stripe>
       <el-table-column label="车牌号" prop="plate_number" width="130" />
@@ -1133,6 +1373,7 @@ const VehiclesView = {
   `,
   setup() {
     const list = ref([]); const dlg = ref(false); const saving = ref(false);
+    const syncing = ref(false);
     const editing = ref(null);
     const form = reactive({ plate_number:"", vehicle_type:"", owner_name:"", remark:"" });
     async function load() { list.value = await http.get("/api/vehicles/"); }
@@ -1155,8 +1396,19 @@ const VehiclesView = {
       await http.delete(`/api/vehicles/${row.id}`);
       ElMessage.success("已删除"); load();
     }
+    async function syncAll() {
+      syncing.value = true;
+      try {
+        const r = await http.post("/api/vehicles/sync-all");
+        ElMessage.success(
+          `同步完成：新增 ${r.vehicles_added} 条，跳过 ${r.vehicles_skipped} 条` +
+          (r.errors?.length ? `，警告: ${r.errors.join('; ')}` : "")
+        );
+        load();
+      } catch (e) { ElMessage.error(e.message); } finally { syncing.value = false; }
+    }
     onMounted(load);
-    return { list, dlg, saving, editing, form, openForm, save, del };
+    return { list, dlg, saving, syncing, editing, form, openForm, save, del, syncAll };
   }
 };
 
@@ -1278,8 +1530,14 @@ const SettingsView = {
     <el-card style="margin-bottom:20px">
       <template #header>Bark 推送</template>
       <el-form :model="form" label-width="130px">
-        <el-form-item label="Bark Key"><el-input v-model="form.bark_key" placeholder="留空则不推送" /></el-form-item>
-        <el-form-item label="Bark Server"><el-input v-model="form.bark_server" /></el-form-item>
+        <el-form-item label="Bark Key">
+          <div style="display:flex;gap:8px;width:100%;align-items:flex-start">
+            <el-input v-model="form.bark_key" type="textarea" :rows="3"
+              placeholder="每行一个 Key，支持多设备推送，留空则不推送" style="flex:1" />
+            <el-button :loading="barkTesting" @click="testBark" :disabled="!form.bark_key" style="margin-top:2px">测试</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="Bark Server"><el-input v-model="form.bark_server" placeholder="https://api.day.app" /></el-form-item>
       </el-form>
     </el-card>
     <el-card>
@@ -1299,12 +1557,20 @@ const SettingsView = {
   setup(_, { emit }) {
     const form = reactive({ selenium_url:"", bark_key:"", bark_server:"", crawler_backend:"api" });
     const pwdForm = reactive({ password:"" });
-    const saving = ref(false); const pwdSaving = ref(false);
+    const saving = ref(false); const pwdSaving = ref(false); const barkTesting = ref(false);
     async function load() { Object.assign(form, await http.get("/api/settings/")); }
     async function save() {
       saving.value = true;
       try { await http.put("/api/settings/", form); ElMessage.success("设置已保存"); emit("saved"); }
       catch (e) { ElMessage.error(e.message); } finally { saving.value = false; }
+    }
+    async function testBark() {
+      barkTesting.value = true;
+      try {
+        const res = await http.post("/api/settings/test-bark");
+        if (res.success) ElMessage.success(res.message);
+        else ElMessage.error(res.message);
+      } catch (e) { ElMessage.error(e.message); } finally { barkTesting.value = false; }
     }
     async function savePwd() {
       if (!pwdForm.password) return ElMessage.warning("密码不能为空");
@@ -1313,7 +1579,110 @@ const SettingsView = {
       catch (e) { ElMessage.error(e.message); } finally { pwdSaving.value = false; }
     }
     onMounted(load);
-    return { form, pwdForm, saving, pwdSaving, save, savePwd };
+    return { form, pwdForm, saving, pwdSaving, barkTesting, save, testBark, savePwd };
+  }
+};
+
+// ══════════════════════════════════════════════════════════
+// 订单列表视图
+// ══════════════════════════════════════════════════════════
+const OrdersView = {
+  template: `
+  <div>
+    <div class="page-header">
+      <h3>订单列表</h3>
+      <el-button @click="load" size="small">🔄 刷新</el-button>
+    </div>
+
+    <div v-if="orders.length === 0" style="text-align:center;padding:60px;color:#999">
+      暂无订单记录，抢票成功后将自动生成
+    </div>
+
+    <el-table v-else :data="orders" border stripe>
+      <el-table-column label="订单号" prop="order_id" width="180">
+        <template #default="{row}">
+          <el-tooltip :content="row.order_id" placement="top">
+            <span style="font-family:monospace;font-size:12px">{{ row.order_id }}</span>
+          </el-tooltip>
+        </template>
+      </el-table-column>
+      <el-table-column label="航线" min-width="130">
+        <template #default="{row}">{{ row.departure_name }} → {{ row.destination_name }}</template>
+      </el-table-column>
+      <el-table-column label="出行日期" prop="travel_date" width="100" />
+      <el-table-column label="航班" width="130">
+        <template #default="{row}">
+          <span>{{ row.sail_time }}</span>
+          <span v-if="row.ship_name" style="color:#888;font-size:12px;margin-left:4px">{{ row.ship_name }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="旅客" min-width="120">
+        <template #default="{row}">
+          <el-tag v-for="p in row.passengers" :key="p" size="small" style="margin:2px">{{ p }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="支付截止" width="160">
+        <template #default="{row}">
+          <span v-if="row.payment_expire_at" :style="isExpired(row) ? 'color:#f56c6c' : 'color:#67c23a'">
+            {{ row.payment_expire_at }}
+          </span>
+          <span v-else style="color:#aaa">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="110">
+        <template #default="{row}">
+          <el-select v-model="row.status" size="small" style="width:96px" @change="updateStatus(row)">
+            <el-option label="待支付" value="pending_payment" />
+            <el-option label="已支付" value="paid" />
+            <el-option label="已取消" value="cancelled" />
+          </el-select>
+        </template>
+      </el-table-column>
+      <el-table-column label="下单时间" width="150">
+        <template #default="{row}">{{ fmtDate(row.created_at) }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="140" fixed="right">
+        <template #default="{row}">
+          <el-button size="small" type="primary" @click="openPay(row)">前往支付</el-button>
+          <el-button size="small" type="danger" plain @click="del(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </div>
+  `,
+  setup() {
+    const orders = ref([]);
+
+    async function load() {
+      orders.value = await http.get("/api/orders/");
+    }
+
+    function isExpired(row) {
+      if (!row.payment_expire_at) return false;
+      return new Date(row.payment_expire_at) < new Date();
+    }
+
+    async function updateStatus(row) {
+      try {
+        await http.patch(`/api/orders/${row.id}/status`, { status: row.status });
+        ElMessage.success("状态已更新");
+      } catch (e) { ElMessage.error(e.message); load(); }
+    }
+
+    function openPay(row) {
+      window.open(row.payment_url, "_blank");
+    }
+
+    async function del(row) {
+      await ElMessageBox.confirm(`确认删除订单 ${row.order_id}？`, "删除确认", { type: "warning" });
+      try {
+        await http.delete(`/api/orders/${row.id}`);
+        ElMessage.success("已删除"); load();
+      } catch (e) { ElMessage.error(e.message); }
+    }
+
+    onMounted(load);
+    return { orders, load, isExpired, updateStatus, openPay, del, fmtDate };
   }
 };
 
@@ -1324,12 +1693,14 @@ for (const [name, comp] of Object.entries(ElementPlusIconsVue)) {
   app.component(name, comp);
 }
 app.component("TasksView", TasksView);
+app.component("TripsView", TripsView);
 app.component("PortsView", PortsView);
 app.component("PassengersView", PassengersView);
 app.component("VehiclesView", VehiclesView);
 app.component("AccountsView", AccountsView);
 app.component("UsersView", UsersView);
 app.component("SettingsView", SettingsView);
+app.component("OrdersView", OrdersView);
 app.mount("#app");
 </script>
 </body>

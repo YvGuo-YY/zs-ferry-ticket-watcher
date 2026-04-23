@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 def _serialize_task(t: Task) -> TaskOut:
     import json as _json
     pids = _json.loads(t.passenger_ids or "[]")
+    seat_classes = [s.strip() for s in (t.seat_class or "").split(",") if s.strip()]
     return TaskOut(
         id=t.id,
         account_id=t.account_id,
@@ -24,8 +25,11 @@ def _serialize_task(t: Task) -> TaskOut:
         destination_name=t.destination_name,
         travel_date=t.travel_date,
         ticket_type=t.ticket_type,
-        seat_class=t.seat_class or "",
+        seat_classes=seat_classes,
+        sail_time_from=getattr(t, "sail_time_from", "") or "",
+        sail_time_to=getattr(t, "sail_time_to", "") or "",
         vehicle_id=t.vehicle_id,
+        driver_passenger_id=getattr(t, "driver_passenger_id", None),
         passenger_ids=pids,
         trigger_type=t.trigger_type,
         trigger_value=t.trigger_value,
@@ -57,11 +61,14 @@ def create_task(
         destination_name=body.destination_name,
         travel_date=body.travel_date,
         ticket_type=body.ticket_type,
-        seat_class=body.seat_class,
+        seat_class=",".join(body.seat_classes),
+        sail_time_from=body.sail_time_from,
+        sail_time_to=body.sail_time_to,
         vehicle_id=body.vehicle_id,
+        driver_passenger_id=body.driver_passenger_id,
         passenger_ids=json.dumps(body.passenger_ids),
         trigger_type=body.trigger_type,
-        trigger_value=body.trigger_value,
+        trigger_value=body.trigger_value or "",
         status="pending",
         created_by=user.id,
     )

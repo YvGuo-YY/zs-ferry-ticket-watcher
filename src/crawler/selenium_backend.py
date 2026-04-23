@@ -88,6 +88,7 @@ class SeleniumBackend(CrawlerBackend):
         trip: dict,
         passenger_ids: list,
         vehicle_id: Optional[int],
+        preferred_seats: list = None,
         log_fn=None,
     ) -> dict:
         # 从数据库读取乘客和车辆详情

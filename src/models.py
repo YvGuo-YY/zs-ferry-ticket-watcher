@@ -45,6 +45,7 @@ class Passenger(Base):
     id_number = Column(String(64), nullable=False)
     phone = Column(String(20), nullable=True)
     remark = Column(String(128), default="")
+    remote_ids_json = Column(Text, default="{}")  # {"<ferry_account_id>": passId}
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -59,8 +60,11 @@ class Task(Base):
     destination_name = Column(String(64), nullable=False)
     travel_date = Column(String(16), nullable=False)  # YYYY-MM-DD
     ticket_type = Column(String(32), nullable=False, default="旅客")  # 旅客 / 小客车及随车人员
-    seat_class = Column(String(32), nullable=False, default="")     # 舱位偏好，空字符串=不限
+    seat_class = Column(String(32), nullable=False, default="")     # 舱位偏好（逗号分隔），空字符串=不限
+    sail_time_from = Column(String(8), default="")                  # 开航时间范围起（HH:MM），空=不限
+    sail_time_to = Column(String(8), default="")                    # 开航时间范围止（HH:MM），空=不限
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)  # 小客车票时选填
+    driver_passenger_id = Column(Integer, ForeignKey("passengers.id"), nullable=True)  # 小客车票驾驶员（从随车旅客中选）
     passenger_ids = Column(Text, default="[]")  # JSON list of passenger IDs
     trigger_type = Column(String(16), nullable=False, default="poll")  # poll / schedule
     trigger_value = Column(String(64), nullable=False)  # poll: 间隔秒数; schedule: ISO datetime
@@ -108,6 +112,7 @@ class Vehicle(Base):
     vehicle_type = Column(String(64), nullable=False, default="")   # 车型
     owner_name = Column(String(64), nullable=False, default="")     # 车主姓名
     remark = Column(String(128), default="")
+    remote_ids_json = Column(Text, default="{}")  # {"<ferry_account_id>": passId}
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -116,3 +121,21 @@ class Setting(Base):
 
     key = Column(String(64), primary_key=True)
     value = Column(Text, default="")
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    account_id = Column(Integer, ForeignKey("ferry_accounts.id"), nullable=True)
+    order_id = Column(String(64), nullable=False, index=True)   # Ferry 远端订单号
+    departure_name = Column(String(64), nullable=False, default="")
+    destination_name = Column(String(64), nullable=False, default="")
+    travel_date = Column(String(16), nullable=False, default="")
+    sail_time = Column(String(8), nullable=True)
+    ship_name = Column(String(64), nullable=True)
+    passengers_json = Column(Text, default="[]")               # list of passenger names
+    payment_expire_at = Column(String(32), nullable=True)      # 支付截止时间（字符串）
+    status = Column(String(24), default="pending_payment")     # pending_payment / paid / cancelled
+    created_at = Column(DateTime, default=datetime.utcnow)

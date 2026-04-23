@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi import APIRouter
 
 from src.database import init_db
-from src.api import auth, users, passengers, accounts, tasks, ports, settings, vehicles
+from src.models import Order  # noqa: F401 – ensure Order table is created
+from src.api import auth, users, passengers, accounts, tasks, ports, settings, vehicles, trips, orders
 from src.scheduler import set_ws_broadcast
 from src.crawler.driver import check_selenium_health
 from src.auth import get_current_user
@@ -33,7 +34,7 @@ app.add_middleware(
 # ─── 注册 API 路由 ─────────────────────────────────────────
 for router in [auth.router, users.router, passengers.router,
                accounts.router, tasks.router, ports.router, settings.router,
-               vehicles.router]:
+               vehicles.router, trips.router, orders.router]:
     app.include_router(router)
 
 

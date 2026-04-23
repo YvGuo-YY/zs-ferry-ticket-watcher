@@ -113,11 +113,14 @@ class TaskCreate(BaseModel):
     destination_name: str
     travel_date: str          # YYYY-MM-DD
     ticket_type: str = "旅客"
-    seat_class: str = ""                # 舱位偏好，空字符串=不限
-    vehicle_id: Optional[int] = None    # 小客车票时选填
+    seat_classes: List[str] = []        # 舱位偏好（多选），空列表=不限
+    sail_time_from: str = ""            # 开航时间起（HH:MM），空=不限
+    sail_time_to: str = ""              # 开航时间止（HH:MM），空=不限
+    vehicle_id: Optional[int] = None          # 小客车票时选填
+    driver_passenger_id: Optional[int] = None  # 小客车票驾驶员（来自旅客列表）
     passenger_ids: List[int] = []
     trigger_type: str = "poll"          # poll / schedule
-    trigger_value: str = "10"           # 秒数 or ISO datetime
+    trigger_value: str = ""             # poll: ""（随机间隔）; schedule: ISO datetime
 
 
 class TaskOut(BaseModel):
@@ -129,8 +132,11 @@ class TaskOut(BaseModel):
     destination_name: str
     travel_date: str
     ticket_type: str
-    seat_class: str
+    seat_classes: List[str]
+    sail_time_from: str
+    sail_time_to: str
     vehicle_id: Optional[int]
+    driver_passenger_id: Optional[int]
     passenger_ids: List[int]
     trigger_type: str
     trigger_value: str

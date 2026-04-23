@@ -77,6 +77,7 @@ class CrawlerBackend(ABC):
         trip: dict,
         passenger_ids: list,
         vehicle_id: Optional[int],
+        preferred_seats: list = None,
         log_fn=None,
     ) -> dict:
         """
@@ -122,3 +123,10 @@ class CrawlerBackend(ABC):
         返回: {"code": int, "message": str}
         """
         return {"code": 0, "message": "此后端不支持删除"}
+
+    def get_sale_date(self, account: FerryAccount, db: Session) -> Optional[str]:
+        """
+        查询当前最远可购票日期。
+        返回: "YYYY-MM-DD" 字符串，或 None（后端不支持时）。
+        """
+        return None

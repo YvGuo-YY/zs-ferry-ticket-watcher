@@ -315,39 +315,80 @@ def _parse_results(driver: WebDriver, wait: WebDriverWait, log) -> list:
     return results
 
 
-def find_available_trip(trips: list, preferred_seat: str = "") -> Optional[dict]:
+def find_available_trip(
+    trips: list,
+    preferred_seat: str = "",       # 向后兼容：单舱位名称
+    preferred_seats: list = None,   # 新：多舱位名称列表
+    sail_time_from: str = "",       # 开航时间起（"HH:MM"），空=不限
+    sail_time_to: str = "",         # 开航时间止（"HH:MM"），空=不限
+) -> Optional[dict]:
     """
     从班次列表中找到合适的班次。
-    preferred_seat: 优先舱位名称（如"上舱"），空字符串表示不限。
-    - 若指定了舱位，优先返回该舱位有余票的班次；无则降级到任意有票班次。
-    - 只选状态"正常"或有预订按钮的班次。
+    preferred_seats: 优先舱位名称列表；优先返回包含任一指定舱位有余票的班次，无则降级。
+    sail_time_from/to: 仅返回开航时间在范围内的班次。
     """
-    def is_ok(trip):
+    # 统一处理舱位参数（兼容旧版 preferred_seat）
+    seats_wanted: list = preferred_seats if preferred_seats is not None else (
+        [preferred_seat] if preferred_seat else []
+    )
+
+    def in_time_range(trip) -> bool:
+        sail = trip.get("sailTime") or trip.get("sail_time", "")
+        if not sail:
+            return True  # 无时间信息，不过滤
+        if sail_time_from and sail < sail_time_from:
+            return False
+        if sail_time_to and sail > sail_time_to:
+            return False
+        return True
+
+    def _is_api(trip) -> bool:
+        return "seatClasses" in trip or "onSale" in trip
+
+    def is_ok(trip) -> bool:
+        if _is_api(trip):
+            if not trip.get("onSale", 1):
+                return False
+            return any(
+                sc.get("localCurrentCount", 0) > 0 or sc.get("pubCurrentCount", 0) > 0
+                for sc in (trip.get("seatClasses") or [])
+            )
         return trip.get("remain", 0) > 0
 
-    def seat_ok(trip):
-        if not preferred_seat:
+    def seat_ok(trip) -> bool:
+        if not seats_wanted:
             return True
-        return trip.get("seats", {}).get(preferred_seat, 0) > 0
+        if _is_api(trip):
+            return any(
+                sc.get("className") in seats_wanted and
+                (sc.get("localCurrentCount", 0) > 0 or sc.get("pubCurrentCount", 0) > 0)
+                for sc in (trip.get("seatClasses") or [])
+            )
+        return any(trip.get("seats", {}).get(s, 0) > 0 for s in seats_wanted)
 
-    # 第一轮：状态正常 + 指定舱位有票
+    def status_ok(trip) -> bool:
+        if _is_api(trip):
+            return bool(trip.get("onSale", 1))
+        return trip.get("status") == "正常"
+
+    # 第一轮：时间范围内 + 状态正常 + 指定舱位有票
     for trip in trips:
-        if trip.get("status") == "正常" and is_ok(trip) and seat_ok(trip):
+        if in_time_range(trip) and status_ok(trip) and is_ok(trip) and seat_ok(trip):
             return trip
 
-    # 第二轮：指定舱位有票（不限状态文字）
-    if preferred_seat:
+    # 第二轮：时间范围内 + 指定舱位有票（不限状态）
+    if seats_wanted:
         for trip in trips:
-            if is_ok(trip) and seat_ok(trip):
+            if in_time_range(trip) and is_ok(trip) and seat_ok(trip):
                 return trip
 
-    # 第三轮：降级到任意有票班次（忽略舱位偏好）
+    # 第三轮：时间范围内 + 任意有票班次
     for trip in trips:
-        if trip.get("status") == "正常" and is_ok(trip):
+        if in_time_range(trip) and status_ok(trip) and is_ok(trip):
             return trip
 
     for trip in trips:
-        if is_ok(trip):
+        if in_time_range(trip) and is_ok(trip):
             return trip
 
     return None

@@ -1,7 +1,8 @@
 """APScheduler 任务调度器，支持轮询和定时两种触发方式"""
 import json
 import logging
-from datetime import datetime
+import random
+from datetime import datetime, timedelta
 from typing import Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -22,6 +23,43 @@ def set_ws_broadcast(fn: Callable):
     _ws_broadcast = fn
 
 
+def _reschedule_poll(task_id: int):
+    """在随机延迟 1~10 秒（1000~10000ms）后重新调度轮询任务"""
+    delay_secs = random.randint(1, 10)
+    run_at = datetime.now() + timedelta(seconds=delay_secs)
+    job_id = f"task_{task_id}"
+    try:
+        _scheduler.add_job(
+            _run_task,
+            trigger=DateTrigger(run_date=run_at),
+            args=[task_id],
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+        )
+    except Exception as e:
+        logger.error(f"Task#{task_id} 重新调度失败: {e}")
+
+
+def _reschedule_next_day_0650(task_id: int):
+    """班次未开放时，调度到明天 06:50 重试（避免在 7 天前高频空轮询）"""
+    tomorrow = datetime.now() + timedelta(days=1)
+    run_at = tomorrow.replace(hour=6, minute=50, second=0, microsecond=0)
+    job_id = f"task_{task_id}"
+    try:
+        _scheduler.add_job(
+            _run_task,
+            trigger=DateTrigger(run_date=run_at),
+            args=[task_id],
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(f"Task#{task_id} 已调度到 {run_at.strftime('%Y-%m-%d 06:50')} 重试")
+    except Exception as e:
+        logger.error(f"Task#{task_id} 次日重新调度失败: {e}")
+
+
 def _write_log(db, task_id: int, level: str, message: str):
     from src.models import TaskLog
     log = TaskLog(task_id=task_id, level=level, message=message)
@@ -37,14 +75,13 @@ def _write_log(db, task_id: int, level: str, message: str):
 def _run_task(task_id: int):
     """实际执行抢票逻辑的函数（在线程池中运行）"""
     from src.database import SessionLocal
-    from src.models import Task, Passenger, FerryAccount, Vehicle
-    from src.crawler.login import ensure_logged_in
-    from src.crawler.query import query_tickets, find_available_trip
-    from src.crawler.booking import book_ticket
+    from src.models import Task, FerryAccount
+    from src.crawler.factory import get_backend
+    from src.crawler.query import find_available_trip
     from src.notify import notify_booked, notify_failed
 
     db = SessionLocal()
-    driver = None
+    reschedule = False
 
     def log(level, msg):
         logger.info(f"[Task#{task_id}] [{level}] {msg}")
@@ -59,27 +96,6 @@ def _run_task(task_id: int):
         db.commit()
         log("INFO", f"任务启动：{task.departure_name} → {task.destination_name}，日期：{task.travel_date}")
 
-        # 获取旅客列表
-        pax_ids = json.loads(task.passenger_ids or "[]")
-        passengers = db.query(Passenger).filter(Passenger.id.in_(pax_ids)).all()
-        pax_list = [
-            {"name": p.name, "id_type": p.id_type, "id_number": p.id_number, "phone": p.phone or ""}
-            for p in passengers
-        ]
-
-        # 获取车辆信息（小客车票时使用）
-        vehicle_info = None
-        if task.vehicle_id:
-            v = db.query(Vehicle).get(task.vehicle_id)
-            if v:
-                vehicle_info = {
-                    "plate_number": v.plate_number,
-                    "vehicle_type": v.vehicle_type,
-                    "owner_name": v.owner_name,
-                }
-                log("INFO", f"关联车辆：{v.plate_number}")
-
-        # 获取 Ferry 账号
         account = db.query(FerryAccount).get(task.account_id)
         if not account:
             log("ERROR", "Ferry 账号不存在")
@@ -87,44 +103,89 @@ def _run_task(task_id: int):
             db.commit()
             return
 
-        # 登录（复用或重新登录）
-        log("INFO", "检查登录状态...")
-        driver, login_msg = ensure_logged_in(account, db)
-        log("INFO", login_msg)
+        backend = get_backend(db)
 
-        # 查询余票
-        log("INFO", "开始查询余票...")
-        trips = query_tickets(
-            driver,
+        log("INFO", "查询余票...")
+        trips = backend.query_trips(
+            account, db,
             task.departure_num,
             task.destination_num,
             task.travel_date,
-            task.ticket_type,
-            departure_name=task.departure_name,
-            destination_name=task.destination_name,
-            log_fn=log,
         )
 
-        trip = find_available_trip(trips, preferred_seat=task.seat_class or "")
+        preferred_seats = [s.strip() for s in (task.seat_class or "").split(",") if s.strip()]
+        trip = find_available_trip(
+            trips,
+            preferred_seats=preferred_seats,
+            sail_time_from=getattr(task, "sail_time_from", "") or "",
+            sail_time_to=getattr(task, "sail_time_to", "") or "",
+        )
         if not trip:
-            log("WARN", "暂无余票")
-            # 轮询模式：不更新 status，等下一次触发
-            if task.trigger_type == "schedule":
-                task.status = "failed"
-                db.commit()
-                notify_failed(task_id, "查询不到余票")
+            if not trips:
+                # 班次列表为空 → 售票还未开放（出发日 7 天前）
+                log("WARN", "班次查询为空（售票未开放），将在明天 06:50 重试")
+                if task.trigger_type == "schedule":
+                    task.status = "failed"
+                    db.commit()
+                    notify_failed(task_id, "查询不到班次（售票未开放）")
+                else:
+                    task.status = "pending"
+                    db.commit()
+                    _reschedule_next_day_0650(task_id)
+            else:
+                log("WARN", "暂无余票")
+                if task.trigger_type == "schedule":
+                    task.status = "failed"
+                    db.commit()
+                    notify_failed(task_id, "查询不到余票")
+                else:
+                    reschedule = True
             return
 
-        # 下单
-        log("INFO", f"发现有票，开始下单，共 {len(pax_list)} 名旅客")
-        result = book_ticket(driver, trip, pax_list, vehicle=vehicle_info, log_fn=log)
+        pax_ids = json.loads(task.passenger_ids or "[]")
+        log("INFO", f"发现有票，开始下单，共 {len(pax_ids)} 名旅客")
+        # 将驾驶员 ID 注入 trip，供 book_ticket 识别哪位乘客是驾驶员
+        if task.driver_passenger_id:
+            trip["_driver_passenger_id"] = task.driver_passenger_id
+        result = backend.book_ticket(
+            account, db, trip, pax_ids, task.vehicle_id,
+            preferred_seats=preferred_seats,
+            log_fn=log,
+        )
 
         if result["success"]:
             task.status = "booked"
             db.commit()
             route = f"{task.departure_name}→{task.destination_name}"
-            notify_booked(result["order_id"] or "未知", route, task.travel_date)
-            # 下单成功后停止轮询
+            # 保存订单记录
+            try:
+                from src.models import Order
+                import json as _json
+                pax_names = []
+                if task.passenger_ids:
+                    from src.models import Passenger
+                    pax_ids_list = _json.loads(task.passenger_ids)
+                    pax_names = [
+                        p.name for p in db.query(Passenger).filter(Passenger.id.in_(pax_ids_list)).all()
+                    ]
+                order_rec = Order(
+                    task_id=task_id,
+                    account_id=task.account_id,
+                    order_id=result.get("order_id") or "",
+                    departure_name=task.departure_name,
+                    destination_name=task.destination_name,
+                    travel_date=task.travel_date,
+                    sail_time=result.get("sail_time") or trip.get("sailTime", ""),
+                    ship_name=result.get("ship_name") or trip.get("shipName", ""),
+                    passengers_json=_json.dumps(pax_names, ensure_ascii=False),
+                    payment_expire_at=result.get("payment_expire_at") or "",
+                    status="pending_payment",
+                )
+                db.add(order_rec)
+                db.commit()
+            except Exception as _oe:
+                logger.warning(f"保存订单记录失败: {_oe}")
+            notify_booked(result.get("order_id") or "未知", route, task.travel_date)
             stop_task(task_id)
         else:
             log("ERROR", f"下单失败：{result['message']}")
@@ -132,24 +193,26 @@ def _run_task(task_id: int):
                 task.status = "failed"
                 db.commit()
                 notify_failed(task_id, result["message"])
+            else:
+                reschedule = True
 
     except Exception as e:
         logger.exception(f"Task#{task_id} 异常：{e}")
         try:
             log("ERROR", f"任务异常：{str(e)[:500]}")
             task = db.query(Task).get(task_id)
-            if task and task.trigger_type == "schedule":
-                task.status = "failed"
-                db.commit()
+            if task:
+                if task.trigger_type == "schedule":
+                    task.status = "failed"
+                    db.commit()
+                else:
+                    reschedule = True
         except Exception:
             pass
     finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
         db.close()
+        if reschedule:
+            _reschedule_poll(task_id)
 
 
 def start_task(task_id: int):
@@ -168,15 +231,21 @@ def start_task(task_id: int):
             _scheduler.remove_job(job_id)
 
         if task.trigger_type == "poll":
-            interval_secs = max(5, int(task.trigger_value or "10"))
+            # 船票提前 7 天放票，07:00 开售 → 最早在出发日前 7 天的 06:50 开始轮询
+            try:
+                travel_dt = datetime.strptime(str(task.travel_date), "%Y-%m-%d")
+                earliest = travel_dt - timedelta(days=7)
+                earliest = earliest.replace(hour=6, minute=50, second=0, microsecond=0)
+            except Exception:
+                earliest = datetime.now()
+            run_at = max(earliest, datetime.now())
             _scheduler.add_job(
                 _run_task,
-                trigger=IntervalTrigger(seconds=interval_secs),
+                trigger=DateTrigger(run_date=run_at),
                 args=[task_id],
                 id=job_id,
                 replace_existing=True,
                 max_instances=1,
-                coalesce=True,
             )
         else:
             # schedule 模式：指定时间触发一次
