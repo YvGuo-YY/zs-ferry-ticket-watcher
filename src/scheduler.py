@@ -73,9 +73,12 @@ def _write_log(db, task_id: int, level: str, message: str):
 
 
 def _reschedule_next_day_0700(task_id: int):
-    """夜间静默期（23:00-07:00），调度到明天 07:00 继续轮询"""
-    tomorrow = datetime.now() + timedelta(days=1)
-    run_at = tomorrow.replace(hour=7, minute=0, second=0, microsecond=0)
+    """夜间静默期（23:00-06:40），调度到最近的 06:40 继续轮询"""
+    now = datetime.now()
+    run_at = now.replace(hour=6, minute=40, second=0, microsecond=0)
+    # 如果今天的 06:40 已经过了，才改成明天
+    if run_at <= now:
+        run_at += timedelta(days=1)
     job_id = f"task_{task_id}"
     try:
         _scheduler.add_job(
@@ -86,7 +89,7 @@ def _reschedule_next_day_0700(task_id: int):
             replace_existing=True,
             max_instances=1,
         )
-        logger.info(f"Task#{task_id} 夜间静默，已调度到 {run_at.strftime('%Y-%m-%d 07:00')} 继续")
+        logger.info(f"Task#{task_id} 夜间静默，已调度到 {run_at.strftime('%Y-%m-%d 06:40')} 继续")
     except Exception as e:
         logger.error(f"Task#{task_id} 夜间重新调度失败: {e}")
 
@@ -150,12 +153,12 @@ def _run_task(task_id: int):
             return
 
         # 常规任务流程
-        # 夜间静默：23:00 ~ 07:00 暂停轮询，等到次日 07:00 再继续
-        current_hour = datetime.now().hour
-        if task.trigger_type == "poll" and (current_hour >= 23 or current_hour < 7):
+        # 夜间静默：23:00 ~ 06:40 暂停轮询，等到最近的 06:40 再继续
+        now = datetime.now()
+        if task.trigger_type == "poll" and (now.hour >= 23 or (now.hour, now.minute) < (6, 40)):
             task.status = "pending"
             db.commit()
-            log("INFO", f"当前时间 {datetime.now().strftime('%H:%M')}，夜间静默期（23:00-07:00），暂停抢票，将于明天 07:00 继续")
+            log("INFO", f"当前时间 {now.strftime('%H:%M')}，夜间静默期（23:00-06:40），暂停抢票，将于 06:40 继续")
             _reschedule_next_day_0700(task_id)
             return
 
