@@ -25,8 +25,8 @@ def set_ws_broadcast(fn: Callable):
 
 def _reschedule_poll(task_id: int):
     """在随机延迟 1~10 秒（1000~10000ms）后重新调度轮询任务"""
-    delay_secs = random.randint(1, 10)
-    run_at = datetime.now() + timedelta(seconds=delay_secs)
+    delay_secs = random.randint(1000, 10000)
+    run_at = datetime.now() + timedelta(milliseconds=delay_secs)
     job_id = f"task_{task_id}"
     try:
         _scheduler.add_job(
@@ -72,13 +72,24 @@ def _write_log(db, task_id: int, level: str, message: str):
             pass
 
 
-def _reschedule_next_day_0700(task_id: int):
-    """夜间静默期（23:00-06:40），调度到最近的 06:40 继续轮询"""
+def _get_poll_sale_start(travel_date: str) -> datetime:
+    """轮询任务的最早开抢时间：按包含出行日当天在内的提前 7 天计算。"""
     now = datetime.now()
-    run_at = now.replace(hour=6, minute=40, second=0, microsecond=0)
-    # 如果今天的 06:40 已经过了，才改成明天
-    if run_at <= now:
-        run_at += timedelta(days=1)
+    try:
+        travel_dt = datetime.strptime(travel_date, "%Y-%m-%d")
+    except Exception:
+        return now
+    sale_day = travel_dt - timedelta(days=6)
+    return sale_day.replace(hour=6, minute=50, second=0, microsecond=0)
+
+
+def _reschedule_to_sale_start_0650(task_id: int, travel_date: str):
+    """
+    按开售日调度到正确的 06:50：
+    - 例如 2026-05-03 的票，在 2026-04-27 06:50 开始查
+    - 其他情况不应调用本函数
+    """
+    run_at = _get_poll_sale_start(travel_date)
     job_id = f"task_{task_id}"
     try:
         _scheduler.add_job(
@@ -89,9 +100,9 @@ def _reschedule_next_day_0700(task_id: int):
             replace_existing=True,
             max_instances=1,
         )
-        logger.info(f"Task#{task_id} 夜间静默，已调度到 {run_at.strftime('%Y-%m-%d 06:40')} 继续")
+        logger.info(f"Task#{task_id} 静默等待，已调度到 {run_at.strftime('%Y-%m-%d %H:%M')} 开始查票")
     except Exception as e:
-        logger.error(f"Task#{task_id} 夜间重新调度失败: {e}")
+        logger.error(f"Task#{task_id} 调度失败: {e}")
 
 
 def _run_task(task_id: int):
@@ -152,15 +163,22 @@ def _run_task(task_id: int):
                 db.commit()
             return
 
-        # 常规任务流程
-        # 夜间静默：23:00 ~ 06:40 暂停轮询，等到最近的 06:40 再继续
+        # 查票时间限制：
+        # - 按包含出行日当天在内的提前 7 天计算开售日
+        # - 例如 5 月 3 日的票，在 4 月 27 日 06:50 开始查票
         now = datetime.now()
-        if task.trigger_type == "poll" and (now.hour >= 23 or (now.hour, now.minute) < (6, 40)):
-            task.status = "pending"
-            db.commit()
-            log("INFO", f"当前时间 {now.strftime('%H:%M')}，夜间静默期（23:00-06:40），暂停抢票，将于 06:40 继续")
-            _reschedule_next_day_0700(task_id)
-            return
+
+        if task.trigger_type == "poll":
+            sale_start = _get_poll_sale_start(task.travel_date)
+            if now < sale_start:
+                task.status = "pending"
+                db.commit()
+                log("INFO", (
+                    f"当前时间 {now.strftime('%H:%M')}，"
+                    f"将于开售时间 {sale_start.strftime('%Y-%m-%d %H:%M')} 开始查票"
+                ))
+                _reschedule_to_sale_start_0650(task_id, task.travel_date)
+                return
 
         task.status = "running"
         db.commit()
@@ -193,8 +211,16 @@ def _run_task(task_id: int):
         )
         if not trip:
             if not trips:
-                # 班次列表为空 → 售票还未开放（出发日 7 天前）
-                log("WARN", "班次查询为空（售票未开放），将在明天 06:50 重试")
+                sale_start = _get_poll_sale_start(task.travel_date) if task.trigger_type == "poll" else None
+                if task.trigger_type == "poll" and sale_start is not None:
+                    if now >= sale_start:
+                        log("WARN", "班次查询为空（已到放票日），继续轮询")
+                        reschedule = True
+                        return
+
+                    log("WARN", "班次查询为空（未到放票日），将在明天 06:50 重试")
+                else:
+                    log("WARN", "班次查询为空（售票未开放）")
                 if task.trigger_type == "schedule":
                     task.status = "failed"
                     db.commit()
@@ -334,11 +360,10 @@ def start_task(task_id: int):
             _scheduler.remove_job(job_id)
 
         if task.trigger_type == "poll":
-            # 船票提前 7 天放票，07:00 开售 → 最早在出发日前 7 天的 06:50 开始轮询
+            # 船票按包含出行日当天在内的提前 7 天开售
+            # 例如 5 月 3 日的票，在 4 月 27 日 06:50 开始轮询
             try:
-                travel_dt = datetime.strptime(str(task.travel_date), "%Y-%m-%d")
-                earliest = travel_dt - timedelta(days=7)
-                earliest = earliest.replace(hour=6, minute=50, second=0, microsecond=0)
+                earliest = _get_poll_sale_start(str(task.travel_date))
             except Exception:
                 earliest = datetime.now()
             run_at = max(earliest, datetime.now())
@@ -352,10 +377,13 @@ def start_task(task_id: int):
             )
         else:
             # schedule 模式：指定时间触发一次
+            # 若触发时间已过（重启恢复场景），立即执行而不是被 APScheduler 静默丢弃
             run_at = datetime.fromisoformat(task.trigger_value)
+            if run_at < datetime.now():
+                run_at = datetime.now()
             _scheduler.add_job(
                 _run_task,
-                trigger=DateTrigger(run_date=run_at, timezone="Asia/Shanghai"),
+                trigger=DateTrigger(run_date=run_at),
                 args=[task_id],
                 id=job_id,
                 replace_existing=True,

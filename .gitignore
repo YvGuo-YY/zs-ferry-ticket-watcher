@@ -3,3 +3,5 @@
 /page-data/
 /tmp.precommit.gitignore
 /weread-challenge.js
+**/*.pyc
+**/*.db
