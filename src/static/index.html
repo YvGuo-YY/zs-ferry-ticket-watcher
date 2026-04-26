@@ -364,7 +364,8 @@ const TasksView = {
             </div>
             <div class="task-footer">
               <div class="task-passengers" style="color:#1a6fb3;font-size:12px">等待 #{{ child.parent_task_id }} 成功后自动触发</div>
-              <div @click.stop>
+              <div @click.stop style="display:flex;gap:8px">
+                <el-button size="small" plain @click="openEdit(child)">编辑</el-button>
                 <el-button type="danger" size="small" plain @click="deleteTask(child)">删除</el-button>
               </div>
             </div>

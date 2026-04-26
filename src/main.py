@@ -135,12 +135,18 @@ async def on_startup():
         for task in stale:
             task.status = "pending"
         db.commit()
-        for task in stale:
+    except Exception as e:
+        logger.warning(f"重置任务状态失败: {e}")
+        db.close()
+        return
+
+    for task in stale:
+        try:
             start_task(task.id)
             logger.info(f"恢复任务 Task#{task.id}（{task.departure_name}→{task.destination_name}）")
-    except Exception as e:
-        logger.warning(f"恢复任务失败: {e}")
-    finally:
-        db.close()
+        except Exception as e:
+            logger.warning(f"恢复任务 Task#{task.id} 失败: {e}")
+
+    db.close()
 
     logger.info("嵊泗渡轮抢票系统启动成功！访问 http://localhost:8000")
