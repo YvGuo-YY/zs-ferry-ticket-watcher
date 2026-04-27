@@ -23,7 +23,7 @@ def set_ws_broadcast(fn: Callable):
     _ws_broadcast = fn
 
 
-def _reschedule_poll(task_id: int):
+def _reschedule_poll_immediately(task_id: int):
     """在随机延迟 1~10 秒（1000~10000ms）后重新调度轮询任务"""
     delay_ms = random.randint(1000, 10000)
     run_at = datetime.now() + timedelta(milliseconds=delay_ms)
@@ -55,9 +55,27 @@ def _reschedule_next_day_0640(task_id: int):
             replace_existing=True,
             max_instances=1,
         )
-        logger.info(f"Task#{task_id} 已调度到 {run_at.strftime('%Y-%m-%d 06:50')} 重试")
+        logger.info(f"Task#{task_id} 已调度到 {run_at.strftime('%Y-%m-%d %H:%M')} 重试")
     except Exception as e:
         logger.error(f"Task#{task_id} 次日重新调度失败: {e}")
+
+
+def _reschedule_today_0640(task_id: int):
+    """开售日当天 06:40 前触发时，调度到今日 06:40 开始抢票"""
+    run_at = datetime.now().replace(hour=6, minute=40, second=0, microsecond=0)
+    job_id = f"task_{task_id}"
+    try:
+        _scheduler.add_job(
+            _run_task,
+            trigger=DateTrigger(run_date=run_at),
+            args=[task_id],
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info(f"Task#{task_id} 已调度到今日 06:40 开始抢票")
+    except Exception as e:
+        logger.error(f"Task#{task_id} 调度今日 06:40 失败: {e}")
 
 
 def _write_log(db, task_id: int, level: str, message: str):
@@ -139,28 +157,12 @@ def _run_task(task_id: int):
                 task.status = "failed"
                 db.commit()
             return
-
-        # 查票时间限制：
-        # - 按包含出行日当天在内的提前 7 天计算开售日
-        # - 例如 5 月 3 日的票，在 4 月 27 日 06:50 开始查票
-        now = datetime.now()
-
-        if task.trigger_type == "poll":
-            sale_start = _get_poll_sale_start(task.travel_date)
-            is_pre_sale = now < sale_start
         else:
             sale_start = None
             is_pre_sale = False
 
         task.status = "running"
         db.commit()
-        if is_pre_sale:
-            log("INFO", (
-                f"放票日前预检（开售日：{sale_start.strftime('%Y-%m-%d')} 06:50），"
-                f"查询 {task.departure_name} → {task.destination_name}，日期：{task.travel_date}"
-            ))
-        else:
-            log("INFO", f"任务启动：{task.departure_name} → {task.destination_name}，日期：{task.travel_date}")
 
         account = db.query(FerryAccount).get(task.account_id)
         if not account:
@@ -188,30 +190,8 @@ def _run_task(task_id: int):
             require_vehicle=bool(task.vehicle_id),
         )
         if not trip:
-            if task.trigger_type == "poll":
-                if is_pre_sale:
-                    # 放票日前：每天检查一次，无论班次是否存在都等到次日
-                    reason = "班次尚未开放" if not trips else "暂无余票"
-                    log("INFO", f"{reason}，明天 06:50 再检查")
-                    task.status = "pending"
-                    db.commit()
-                    _reschedule_next_day_0640(task_id)
-                else:
-                    # 已到放票日：高频轮询
-                    if not trips:
-                        log("WARN", "班次查询为空（已到放票日），继续轮询")
-                    else:
-                        log("WARN", "暂无余票")
-                    reschedule = True
-            else:  # schedule
-                if not trips:
-                    log("WARN", "班次查询为空（售票未开放）")
-                    notify_failed(task_id, "查询不到班次（售票未开放）")
-                else:
-                    log("WARN", "暂无余票")
-                    notify_failed(task_id, "查询不到余票")
-                task.status = "failed"
-                db.commit()
+            log("INFO", "未找到合适的班次，继续轮询...")
+            _reschedule_poll_immediately(task_id)
             return
 
         pax_ids = json.loads(task.passenger_ids or "[]")
@@ -257,21 +237,10 @@ def _run_task(task_id: int):
 
     except Exception as e:
         logger.exception(f"Task#{task_id} 异常：{e}")
-        try:
-            log("ERROR", f"任务异常：{str(e)[:500]}")
-            task = db.query(Task).get(task_id)
-            if task:
-                if task.trigger_type == "schedule":
-                    task.status = "failed"
-                    db.commit()
-                else:
-                    reschedule = True
-        except Exception:
-            pass
     finally:
         db.close()
         if reschedule:
-            _reschedule_poll(task_id)
+            _reschedule_poll_immediately(task_id)
 
 
 def _save_order(db, task, trip, result):
@@ -329,47 +298,54 @@ def start_task(task_id: int):
         if not task:
             return
 
-        job_id = f"task_{task_id}"
         # 先移除旧任务（若有）
-        if _scheduler.get_job(job_id):
-            _scheduler.remove_job(job_id)
+        _remove_existing_job(task_id)
 
-        if task.trigger_type == "poll":
-            # 立即触发首次检查；_run_task 内部按 is_pre_sale 决定行为：
-            # - 放票日前：查完后调度到次日 06:50（每日一检）
-            # - 放票日起：高频轮询（1~10s）直到抢到票
-            _scheduler.add_job(
-                _run_task,
-                trigger=DateTrigger(run_date=datetime.now()),
-                args=[task_id],
-                id=job_id,
-                replace_existing=True,
-                max_instances=1,
-            )
+        now = datetime.now()
+        if now > datetime.now().replace(hour=23):
+            log("INFO", "当前时间已过 23:00，调度到次日 06:40 开始抢票")
+            _reschedule_next_day_0640(task_id)
+            return
+        # 刷票时间限制：
+        # - 开售日为包含出行日当天在内的提前 7 天
+        # - 例如 5 月 3 日的票，在 4 月 27 日 06:50 开始查票
+        sale_datetime = _get_poll_sale_start(task.travel_date)  # 开售日 06:40
+        sale_date = sale_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if now < sale_date:
+            # 情况3：now 在开售日之前 → 每日 06:40 检查一次
+            log("INFO", (
+                f"开售日之前（开售日：{sale_datetime.strftime('%Y-%m-%d')}），"
+                f"将于每天 06:40 检查是否开放抢票"
+            ))
+            _reschedule_next_day_0640(task_id)
+        elif now < sale_datetime:
+            # 情况1：now 在开售日当天且在 06:40 之前 → 调度到今日 06:40，无需查询
+            log("INFO", (
+                f"开售日当天 06:40 前（开售日：{sale_datetime.strftime('%Y-%m-%d')}）,"
+                f"将于今日 06:40 开始抢票"
+            ))
+            _reschedule_today_0640(task_id)
+            return
         else:
-            # schedule 模式：指定时间触发一次
-            # 若触发时间已过（重启恢复场景），立即执行而不是被 APScheduler 静默丢弃
-            run_at = datetime.fromisoformat(task.trigger_value)
-            if run_at < datetime.now():
-                run_at = datetime.now()
-            _scheduler.add_job(
-                _run_task,
-                trigger=DateTrigger(run_date=run_at),
-                args=[task_id],
-                id=job_id,
-                replace_existing=True,
-                max_instances=1,
-            )
+            # 情况2：now 在开售日当天且在 06:40 或之后 → 立即开始高频轮询
+            log("INFO", (
+                f"已到开售日当天 06:40 或之后（开售日：{sale_datetime.strftime('%Y-%m-%d')}）,"
+                f"立即开始抢票"
+            ))
+            _reschedule_poll_immediately(task_id)
     finally:
         db.close()
 
-
-def stop_task(task_id: int):
-    """停止任务的调度"""
+def _remove_existing_job(task_id: int):
+    """移除已存在的调度任务（如果有）"""
     job_id = f"task_{task_id}"
     if _scheduler.get_job(job_id):
         _scheduler.remove_job(job_id)
 
+def stop_task(task_id: int):
+    """停止任务的调度"""
+    _remove_existing_job(task_id)
 
 def get_running_jobs() -> list[str]:
     return [job.id for job in _scheduler.get_jobs()]
