@@ -41,10 +41,10 @@ def _reschedule_poll(task_id: int):
         logger.error(f"Task#{task_id} 重新调度失败: {e}")
 
 
-def _reschedule_next_day_0650(task_id: int):
-    """班次未开放时，调度到明天 06:50 重试（避免在 7 天前高频空轮询）"""
+def _reschedule_next_day_0640(task_id: int):
+    """班次未开放时，调度到明天 06:40 重试（避免在 7 天前高频空轮询）"""
     tomorrow = datetime.now() + timedelta(days=1)
-    run_at = tomorrow.replace(hour=6, minute=50, second=0, microsecond=0)
+    run_at = tomorrow.replace(hour=6, minute=40, second=0, microsecond=0)
     job_id = f"task_{task_id}"
     try:
         _scheduler.add_job(
@@ -80,30 +80,7 @@ def _get_poll_sale_start(travel_date: str) -> datetime:
     except Exception:
         return now
     sale_day = travel_dt - timedelta(days=6)
-    return sale_day.replace(hour=6, minute=50, second=0, microsecond=0)
-
-
-def _reschedule_to_sale_start_0650(task_id: int, travel_date: str):
-    """
-    按开售日调度到正确的 06:50：
-    - 例如 2026-05-03 的票，在 2026-04-27 06:50 开始查
-    - 其他情况不应调用本函数
-    """
-    run_at = _get_poll_sale_start(travel_date)
-    job_id = f"task_{task_id}"
-    try:
-        _scheduler.add_job(
-            _run_task,
-            trigger=DateTrigger(run_date=run_at),
-            args=[task_id],
-            id=job_id,
-            replace_existing=True,
-            max_instances=1,
-        )
-        logger.info(f"Task#{task_id} 静默等待，已调度到 {run_at.strftime('%Y-%m-%d %H:%M')} 开始查票")
-    except Exception as e:
-        logger.error(f"Task#{task_id} 调度失败: {e}")
-
+    return sale_day.replace(hour=6, minute=40, second=0, microsecond=0)
 
 def _run_task(task_id: int):
     """实际执行抢票逻辑的函数（在线程池中运行）"""
@@ -218,7 +195,7 @@ def _run_task(task_id: int):
                     log("INFO", f"{reason}，明天 06:50 再检查")
                     task.status = "pending"
                     db.commit()
-                    _reschedule_next_day_0650(task_id)
+                    _reschedule_next_day_0640(task_id)
                 else:
                     # 已到放票日：高频轮询
                     if not trips:
