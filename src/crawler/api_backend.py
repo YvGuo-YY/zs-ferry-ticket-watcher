@@ -276,10 +276,11 @@ class ApiBackend(CrawlerBackend):
         date: str,
     ) -> list:
         resp = self._authed_post(
-            "/line/ferry/enq",
+            "/line/ship/enq",
             account,
             db,
             data={
+                "accountTypeId": 0,
                 "startPortNo": start_port_no,
                 "endPortNo": end_port_no,
                 "startDate": date,

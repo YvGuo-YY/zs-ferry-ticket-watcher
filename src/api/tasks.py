@@ -176,6 +176,8 @@ def start_task(
     if task.status == "running":
         raise HTTPException(status_code=400, detail="任务正在运行中")
     sched_start(task_id)
+    task.status = "pending"
+    db.commit()
     return {"message": "任务已启动"}
 
 
