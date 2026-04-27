@@ -100,6 +100,7 @@ def _get_poll_sale_start(travel_date: str) -> datetime:
     sale_day = travel_dt - timedelta(days=6)
     return sale_day.replace(hour=6, minute=40, second=0, microsecond=0)
 
+
 def _run_task(task_id: int):
     """实际执行抢票逻辑的函数（在线程池中运行）"""
     from src.database import SessionLocal
@@ -119,6 +120,11 @@ def _run_task(task_id: int):
         task = db.query(Task).get(task_id)
         if not task or task.status not in ("running", "pending", "waiting"):
             return
+        now = datetime.now()
+        if now > now.replace(hour=23, minute=0, second=0, microsecond=0):
+            log("INFO", "当前时间已过 23:00，调度到次日 06:40 开始抢票")
+            _reschedule_next_day_0640(task_id)
+            return
 
         # 子任务（等待主任务注入班次后直接下单）
         if getattr(task, "parent_task_id", None) and getattr(task, "linked_trip_json", None):
@@ -129,7 +135,7 @@ def _run_task(task_id: int):
             db.commit()
             log("INFO", (
                 f"关联任务启动：直接使用主任务锁定班次 "
-                f"{trip.get('lineName','')} {trip.get('sailTime','')} {trip.get('shipName','')}，"
+                f"{trip.get('lineName', '')} {trip.get('sailTime', '')} {trip.get('shipName', '')}，"
                 f"共 {len(pax_ids)} 名旅客"
             ))
             account = db.query(FerryAccount).get(task.account_id)
@@ -157,9 +163,6 @@ def _run_task(task_id: int):
                 task.status = "failed"
                 db.commit()
             return
-        else:
-            sale_start = None
-            is_pre_sale = False
 
         task.status = "running"
         db.commit()
@@ -227,16 +230,11 @@ def _run_task(task_id: int):
                           result.get("payment_expire_at", ""))
             stop_task(task_id)
         else:
-            log("ERROR", f"下单失败：{result['message']}")
-            if task.trigger_type == "schedule":
-                task.status = "failed"
-                db.commit()
-                notify_failed(task_id, result["message"])
-            else:
-                reschedule = True
+            reschedule = True
 
     except Exception as e:
         logger.exception(f"Task#{task_id} 异常：{e}")
+        notify_failed(f"Task#{task_id} 执行异常: {e}")
     finally:
         db.close()
         if reschedule:
@@ -301,27 +299,23 @@ def start_task(task_id: int):
         # 先移除旧任务（若有）
         _remove_existing_job(task_id)
 
-        now = datetime.now()
-        if now > datetime.now().replace(hour=23):
-            log("INFO", "当前时间已过 23:00，调度到次日 06:40 开始抢票")
-            _reschedule_next_day_0640(task_id)
-            return
         # 刷票时间限制：
         # - 开售日为包含出行日当天在内的提前 7 天
         # - 例如 5 月 3 日的票，在 4 月 27 日 06:50 开始查票
+        now = datetime.now()
         sale_datetime = _get_poll_sale_start(task.travel_date)  # 开售日 06:40
         sale_date = sale_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
 
         if now < sale_date:
             # 情况3：now 在开售日之前 → 每日 06:40 检查一次
-            log("INFO", (
+            _write_log(db, task_id, "INFO", (
                 f"开售日之前（开售日：{sale_datetime.strftime('%Y-%m-%d')}），"
                 f"将于每天 06:40 检查是否开放抢票"
             ))
             _reschedule_next_day_0640(task_id)
         elif now < sale_datetime:
             # 情况1：now 在开售日当天且在 06:40 之前 → 调度到今日 06:40，无需查询
-            log("INFO", (
+            _write_log(db, task_id, "INFO", (
                 f"开售日当天 06:40 前（开售日：{sale_datetime.strftime('%Y-%m-%d')}）,"
                 f"将于今日 06:40 开始抢票"
             ))
@@ -329,7 +323,7 @@ def start_task(task_id: int):
             return
         else:
             # 情况2：now 在开售日当天且在 06:40 或之后 → 立即开始高频轮询
-            log("INFO", (
+            _write_log(db, task_id, "INFO", (
                 f"已到开售日当天 06:40 或之后（开售日：{sale_datetime.strftime('%Y-%m-%d')}）,"
                 f"立即开始抢票"
             ))
@@ -337,15 +331,18 @@ def start_task(task_id: int):
     finally:
         db.close()
 
+
 def _remove_existing_job(task_id: int):
     """移除已存在的调度任务（如果有）"""
     job_id = f"task_{task_id}"
     if _scheduler.get_job(job_id):
         _scheduler.remove_job(job_id)
 
+
 def stop_task(task_id: int):
     """停止任务的调度"""
     _remove_existing_job(task_id)
+
 
 def get_running_jobs() -> list[str]:
     return [job.id for job in _scheduler.get_jobs()]
