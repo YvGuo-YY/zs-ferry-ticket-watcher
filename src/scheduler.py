@@ -234,7 +234,7 @@ def _run_task(task_id: int):
 
     except Exception as e:
         logger.exception(f"Task#{task_id} 异常：{e}")
-        notify_failed(f"Task#{task_id} 执行异常: {e}")
+        notify_failed(task_id, f"Task#{task_id} 执行异常: {e}")
     finally:
         db.close()
         if reschedule:
