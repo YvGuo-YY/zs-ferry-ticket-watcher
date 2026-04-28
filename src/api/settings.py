@@ -4,8 +4,7 @@ from sqlalchemy.orm import Session
 from src.database import get_db
 from src.models import SystemUser, Setting
 from src.auth import get_current_user
-from src.schemas import SettingsUpdate
-from src.notify import send_bark
+from src.schemas import BarkTestRequest, SettingsUpdate
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -50,11 +49,19 @@ def update_settings(
 
 @router.post("/test-bark")
 def test_bark(
+    body: BarkTestRequest | None = None,
     db: Session = Depends(get_db),
     _: SystemUser = Depends(get_current_user),
 ):
-    from src.notify import _get_bark_config, _send_to_key
-    keys, server = _get_bark_config()
+    from src.notify import DEFAULT_SERVER, _get_bark_config, _send_to_key, split_bark_keys
+
+    bark_key = (body.bark_key if body else None)
+    bark_server = (body.bark_server if body else None)
+    if bark_key is not None:
+        keys = split_bark_keys(bark_key)
+        server = (bark_server or "").strip() or DEFAULT_SERVER
+    else:
+        keys, server = _get_bark_config()
     if not keys:
         return {"success": False, "message": "Bark Key 未配置"}
     payload = {

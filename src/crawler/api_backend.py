@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from src.crawler.base import CrawlerBackend
 from src.crawler.session import decrypt_password
-from src.models import FerryAccount, Passenger, Vehicle
+from src.models import FerryAccount, Order, Passenger, Vehicle
 
 BASE_URL = "https://pc.ssky123.com/api/v2"
 _SITE_HOME = "https://pc.ssky123.com/"
@@ -253,6 +253,83 @@ class ApiBackend(CrawlerBackend):
 
         return result
 
+    def sync_orders(self, account: FerryAccount, db: Session) -> dict:
+        result = {
+            "supported": True,
+            "fetched": 0,
+            "created": 0,
+            "updated": 0,
+            "errors": [],
+        }
+        page_no = 1
+        page_size = 100
+        self.ensure_logged_in(account, db)
+        token, user_id = self._load_session(account)
+
+        def authed_get_once(path: str, **kwargs) -> dict:
+            nonlocal token, user_id
+            resp_json = self._get(path, token, user_id, account=account, **kwargs)
+            if self._is_auth_failure(resp_json):
+                self.login(account, db)
+                token, user_id = self._load_session(account)
+                resp_json = self._get(path, token, user_id, account=account, **kwargs)
+            return resp_json
+
+        while True:
+            try:
+                resp = authed_get_once(
+                    "/user/order/list",
+                    params={
+                        "orderState": 1,
+                        "pageNo": page_no,
+                        "pageSize": page_size,
+                    },
+                )
+            except Exception as e:
+                result["errors"].append(f"获取订单列表失败: {e}")
+                break
+
+            if resp.get("code") != 200:
+                result["errors"].append(f"获取订单列表失败: {resp.get('message') or resp.get('code')}")
+                break
+
+            rows = resp.get("data") or []
+            if not rows:
+                break
+
+            for row in rows:
+                result["fetched"] += 1
+                try:
+                    order_id = str(row.get("orderId") or "").strip()
+                    existing = db.query(Order).filter(
+                        Order.account_id == account.id,
+                        Order.order_id == order_id,
+                    ).first()
+                    needs_detail = _existing_order_needs_detail(existing)
+                    detail = {k: v for k, v in row.items() if k != "orderItemList"}
+                    if needs_detail:
+                        detail_resp = authed_get_once(
+                            "/user/order/detail",
+                            params={"orderId": row.get("orderId")},
+                        )
+                        detail = detail_resp.get("data") or {}
+                        if detail_resp.get("code") != 200:
+                            raise RuntimeError(detail_resp.get("message") or detail_resp.get("code"))
+                    created = _upsert_order(db, account.id, row, detail)
+                    if created:
+                        result["created"] += 1
+                    else:
+                        result["updated"] += 1
+                except Exception as e:
+                    order_id = row.get("orderId") or "未知订单"
+                    result["errors"].append(f"同步订单 {order_id} 失败: {e}")
+
+            if len(rows) < page_size:
+                break
+            page_no += 1
+
+        return result
+
     # ── 可售日期查询 ──────────────────────────────────────
 
     def get_sale_date(self, account: FerryAccount, db: Session) -> str | None:
@@ -274,17 +351,21 @@ class ApiBackend(CrawlerBackend):
         start_port_no: int,
         end_port_no: int,
         date: str,
+        require_vehicle: bool = False,
     ) -> list:
+        path = "/line/ferry/enq" if require_vehicle else "/line/ship/enq"
+        data = {
+            "startPortNo": start_port_no,
+            "endPortNo": end_port_no,
+            "startDate": date,
+        }
+        if not require_vehicle:
+            data["accountTypeId"] = "0"
         resp = self._authed_post(
-            "/line/ship/enq",
+            path,
             account,
             db,
-            data={
-                "accountTypeId": 0,
-                "startPortNo": start_port_no,
-                "endPortNo": end_port_no,
-                "startDate": date,
-            },
+            data=data,
         )
         if resp.get("code") != 200:
             raise RuntimeError(f"查询班次失败：{resp.get('message')}")
@@ -629,6 +710,101 @@ def _pick_seat(seat_classes: list, preferred: list):
                 return sc
         return None  # 指定了偏好舱位但均无余票
     return available[0] if available else None
+
+
+def _normalize_order_status(detail: dict, row: dict) -> str:
+    cancel_time = detail.get("cancelTime") or row.get("cancelTime")
+    pay_time = detail.get("payTime") or row.get("payTime")
+    if cancel_time:
+        return "cancelled"
+    if pay_time:
+        return "paid"
+    return "pending_payment"
+
+
+def _parse_remote_datetime(value) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            ts = value / 1000 if value > 10_000_000_000 else value
+            return datetime.fromtimestamp(ts)
+        except Exception:
+            return None
+    value = str(value)
+    for fmt in ("%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _normalize_expire_time(value):
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value / 1000).strftime("%Y/%m/%d %H:%M:%S")
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def _order_items_have_detail(items) -> bool:
+    if not isinstance(items, list) or not items:
+        return False
+    detail_keys = ("passName", "seatClassName", "credentialNum", "lineName", "createTime", "realFee")
+    return any(
+        isinstance(item, dict) and any(item.get(key) not in (None, "") for key in detail_keys)
+        for item in items
+    )
+
+
+def _existing_order_needs_detail(order: Order | None) -> bool:
+    if order is None:
+        return True
+    try:
+        items = json.loads(order.order_items_json or "[]")
+    except Exception:
+        return True
+    return not _order_items_have_detail(items)
+
+
+def _upsert_order(db: Session, account_id: int, row: dict, detail: dict) -> bool:
+    order_id = str(detail.get("orderId") or row.get("orderId") or "").strip()
+    if not order_id:
+        raise RuntimeError("远端订单缺少 orderId")
+
+    order = db.query(Order).filter(
+        Order.account_id == account_id,
+        Order.order_id == order_id,
+    ).first()
+    created = order is None
+    if created:
+        order = Order(account_id=account_id, order_id=order_id)
+        db.add(order)
+
+    order.departure_name = detail.get("startPortName") or row.get("startPortName") or ""
+    order.destination_name = detail.get("endPortName") or row.get("endPortName") or ""
+    order.travel_date = detail.get("sailDate") or row.get("sailDate") or ""
+    order.sail_time = detail.get("sailTime") or row.get("sailTime") or ""
+    order.ship_name = detail.get("shipName") or row.get("shipName") or ""
+    order.ship_type = detail.get("clxm") or row.get("clxm") or ""
+    detail_items = detail.get("orderItemList")
+    if _order_items_have_detail(detail_items):
+        passengers = [
+            item.get("passName")
+            for item in detail_items
+            if item.get("passName")
+        ]
+        order.passengers_json = json.dumps(passengers, ensure_ascii=False)
+        order.order_items_json = json.dumps(detail_items, ensure_ascii=False)
+    order.payment_expire_at = _normalize_expire_time(detail.get("expireTime") or row.get("expireTime") or "")
+    order.status = _normalize_order_status(detail, row)
+    order.remote_created_at = _parse_remote_datetime(detail.get("createTime") or row.get("createTime"))
+    db.commit()
+    return created
 
 
 # ── 数据库写入辅助（与 sync_profile.py 的去重逻辑相同） ─────────────────
