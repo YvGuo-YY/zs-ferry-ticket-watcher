@@ -70,6 +70,7 @@ class Task(Base):
     trigger_value = Column(String(64), nullable=False)  # poll: 间隔秒数; schedule: ISO datetime
     status = Column(String(16), default="pending")  # pending/running/booked/failed/stopped/waiting
     parent_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)  # 关联主任务 ID（从任务专用）
+    split_source_task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)  # 超员拆单来源主任务
     linked_trip_json = Column(Text, nullable=True)   # 主任务成功后注入的班次数据（从任务直接下单用）
     created_by = Column(Integer, ForeignKey("system_users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -137,7 +138,10 @@ class Order(Base):
     travel_date = Column(String(16), nullable=False, default="")
     sail_time = Column(String(8), nullable=True)
     ship_name = Column(String(64), nullable=True)
+    ship_type = Column(String(64), nullable=True)
     passengers_json = Column(Text, default="[]")               # list of passenger names
+    order_items_json = Column(Text, default="[]")              # 远端 detail.orderItemList
     payment_expire_at = Column(String(32), nullable=True)      # 支付截止时间（字符串）
     status = Column(String(24), default="pending_payment")     # pending_payment / paid / cancelled
+    remote_created_at = Column(DateTime, nullable=True)        # 远端订单创建时间
     created_at = Column(DateTime, default=datetime.now)

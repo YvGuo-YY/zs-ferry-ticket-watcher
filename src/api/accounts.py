@@ -90,7 +90,13 @@ def test_login(
     try:
         backend = get_backend(db)
         message = backend.login(acc, db)
-        return {"success": True, "message": message}
+        order_sync = backend.sync_orders(acc, db)
+        if order_sync.get("supported"):
+            message = (
+                f"{message}；订单同步 {order_sync.get('fetched', 0)} 条，"
+                f"新增 {order_sync.get('created', 0)} 条，更新 {order_sync.get('updated', 0)} 条"
+            )
+        return {"success": True, "message": message, "order_sync": order_sync}
     except Exception as e:
         print(e)
         return {"success": False, "message": str(e)}
@@ -165,8 +171,16 @@ def _bg_sync(acc_id: int):
             f"联系人 +{result['passengers_added']} 跳过{result['passengers_skipped']}，"
             f"车辆 +{result['vehicles_added']} 跳过{result['vehicles_skipped']}"
         )
+        order_sync = backend.sync_orders(acc, db)
+        if order_sync.get("supported"):
+            print(
+                f"[SYNC] 订单同步完成："
+                f"拉取 {order_sync['fetched']}，新增 {order_sync['created']}，更新 {order_sync['updated']}"
+            )
         if result["errors"]:
             print(f"[SYNC] 同步错误: {result['errors']}")
+        if order_sync.get("errors"):
+            print(f"[SYNC] 订单同步错误: {order_sync['errors']}")
     except Exception as e:
         print(f"[SYNC] 账号 {acc_id} 后台同步异常: {e}")
     finally:
