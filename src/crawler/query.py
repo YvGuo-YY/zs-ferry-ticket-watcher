@@ -86,6 +86,25 @@ def query_tickets(
     return results
 
 
+def query_trips(
+    driver: WebDriver,
+    departure_num: int,
+    destination_num: int,
+    travel_date: str,
+    require_vehicle: bool = False,
+    log_fn=None,
+) -> list:
+    ticket_type = "小客车及随车人员" if require_vehicle else "旅客"
+    return query_tickets(
+        driver,
+        departure_num,
+        destination_num,
+        travel_date,
+        ticket_type=ticket_type,
+        log_fn=log_fn,
+    )
+
+
 def _select_ticket_type(driver: WebDriver, wait: WebDriverWait, ticket_type: str, log):
     """
     选择票种。

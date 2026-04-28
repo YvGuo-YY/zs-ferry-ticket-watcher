@@ -106,8 +106,9 @@ class PortsCacheOut(BaseModel):
 
 # ─── 任务 ────────────────────────────────────────────────
 class LinkedPassengerTask(BaseModel):
-    """随主任务同步创建的关联旅客单（等待主任务成功后触发）"""
-    passenger_ids: List[int]
+    """手动启用的超员拆单配置"""
+    enabled: bool = False
+    same_trip: bool = True
     seat_classes: List[str] = []
 
 
@@ -127,11 +128,11 @@ class TaskCreate(BaseModel):
     passenger_ids: List[int] = []
     trigger_type: str = "poll"          # poll / schedule
     trigger_value: str = ""             # poll: ""（随机间隔）; schedule: ISO datetime
-    linked_passenger_task: Optional["LinkedPassengerTask"] = None  # 创建时附带的关联旅客单
+    linked_passenger_task: Optional["LinkedPassengerTask"] = None  # 手动启用的超员拆单配置
 
 
 class TaskUpdate(BaseModel):
-    """编辑任务（不可更改出发/到达港口；不可新增/删除关联旅客单）"""
+    """编辑任务（不可更改出发/到达港口）"""
     account_id: Optional[int] = None
     travel_date: Optional[str] = None
     ticket_type: Optional[str] = None
@@ -143,6 +144,7 @@ class TaskUpdate(BaseModel):
     passenger_ids: Optional[List[int]] = None
     trigger_type: Optional[str] = None
     trigger_value: Optional[str] = None
+    linked_passenger_task: Optional["LinkedPassengerTask"] = None
 
 
 class TaskOut(BaseModel):
@@ -164,6 +166,7 @@ class TaskOut(BaseModel):
     trigger_value: str
     status: str
     parent_task_id: Optional[int] = None
+    split_source_task_id: Optional[int] = None
     child_task_ids: List[int] = []
     created_at: datetime
     updated_at: datetime
@@ -234,3 +237,8 @@ class SettingsUpdate(BaseModel):
     bark_key: Optional[str] = None
     bark_server: Optional[str] = None
     crawler_backend: Optional[str] = None  # "api" | "selenium"
+
+
+class BarkTestRequest(BaseModel):
+    bark_key: Optional[str] = None
+    bark_server: Optional[str] = None

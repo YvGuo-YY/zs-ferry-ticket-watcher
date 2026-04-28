@@ -60,10 +60,12 @@ class CrawlerBackend(ABC):
         start_port_no: int,
         end_port_no: int,
         date: str,
+        require_vehicle: bool = False,
     ) -> list:
         """
         查询指定日期的可售班次。
         date 格式: "YYYY-MM-DD"
+        require_vehicle: 为 True 时查询客滚船/车辆票班次。
         返回班次列表（原始数据结构，供 booking 层使用）。
         """
 
@@ -130,3 +132,10 @@ class CrawlerBackend(ABC):
         返回: "YYYY-MM-DD" 字符串，或 None（后端不支持时）。
         """
         return None
+
+    def sync_orders(self, account: FerryAccount, db: Session) -> dict:
+        """
+        从远端订单列表同步订单到本地。
+        默认不支持，返回空结果。
+        """
+        return {"supported": False, "fetched": 0, "created": 0, "updated": 0, "errors": []}

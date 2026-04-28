@@ -2,6 +2,7 @@
 import json
 import logging
 import random
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
 
@@ -18,25 +19,37 @@ _scheduler.start()
 _ws_broadcast: Callable = None
 
 
+@dataclass(frozen=True)
+class StartDecision:
+    action: str
+    run_at: datetime | None = None
+    sale_datetime: datetime | None = None
+    trigger_at: datetime | None = None
+
+
 def set_ws_broadcast(fn: Callable):
     global _ws_broadcast
     _ws_broadcast = fn
+
+
+def _schedule_job(task_id: int, run_at: datetime, runner: Callable[[int], None]):
+    job_id = f"task_{task_id}"
+    _scheduler.add_job(
+        runner,
+        trigger=DateTrigger(run_date=run_at),
+        args=[task_id],
+        id=job_id,
+        replace_existing=True,
+        max_instances=1,
+    )
 
 
 def _reschedule_poll_immediately(task_id: int):
     """在随机延迟 1~10 秒（1000~10000ms）后重新调度轮询任务"""
     delay_ms = random.randint(1000, 10000)
     run_at = datetime.now() + timedelta(milliseconds=delay_ms)
-    job_id = f"task_{task_id}"
     try:
-        _scheduler.add_job(
-            _run_task,
-            trigger=DateTrigger(run_date=run_at),
-            args=[task_id],
-            id=job_id,
-            replace_existing=True,
-            max_instances=1,
-        )
+        _schedule_job(task_id, run_at, _run_task)
     except Exception as e:
         logger.error(f"Task#{task_id} 重新调度失败: {e}")
 
@@ -45,16 +58,8 @@ def _reschedule_next_day_0640(task_id: int):
     """班次未开放时，调度到明天 06:40 重试（避免在 7 天前高频空轮询）"""
     tomorrow = datetime.now() + timedelta(days=1)
     run_at = tomorrow.replace(hour=6, minute=40, second=0, microsecond=0)
-    job_id = f"task_{task_id}"
     try:
-        _scheduler.add_job(
-            _run_task,
-            trigger=DateTrigger(run_date=run_at),
-            args=[task_id],
-            id=job_id,
-            replace_existing=True,
-            max_instances=1,
-        )
+        _schedule_job(task_id, run_at, _run_task)
         logger.info(f"Task#{task_id} 已调度到 {run_at.strftime('%Y-%m-%d %H:%M')} 重试")
     except Exception as e:
         logger.error(f"Task#{task_id} 次日重新调度失败: {e}")
@@ -63,16 +68,8 @@ def _reschedule_next_day_0640(task_id: int):
 def _reschedule_today_0640(task_id: int):
     """开售日当天 06:40 前触发时，调度到今日 06:40 开始抢票"""
     run_at = datetime.now().replace(hour=6, minute=40, second=0, microsecond=0)
-    job_id = f"task_{task_id}"
     try:
-        _scheduler.add_job(
-            _run_task,
-            trigger=DateTrigger(run_date=run_at),
-            args=[task_id],
-            id=job_id,
-            replace_existing=True,
-            max_instances=1,
-        )
+        _schedule_job(task_id, run_at, _run_task)
         logger.info(f"Task#{task_id} 已调度到今日 06:40 开始抢票")
     except Exception as e:
         logger.error(f"Task#{task_id} 调度今日 06:40 失败: {e}")
@@ -101,6 +98,143 @@ def _get_poll_sale_start(travel_date: str) -> datetime:
     return sale_day.replace(hour=6, minute=40, second=0, microsecond=0)
 
 
+def _parse_schedule_datetime(trigger_value: str) -> datetime:
+    if not trigger_value:
+        raise ValueError("schedule trigger_value is required")
+    try:
+        return datetime.fromisoformat(trigger_value)
+    except ValueError as exc:
+        raise ValueError(f"invalid schedule trigger_value: {trigger_value}") from exc
+
+
+def _trip_sail_time(trip: dict) -> str:
+    return trip.get("sailTime") or trip.get("sail_time", "") or ""
+
+
+def _trip_in_time_range(trip: dict, sail_time_from: str, sail_time_to: str) -> bool:
+    sail = _trip_sail_time(trip)
+    if not sail:
+        return True
+    if sail_time_from and sail < sail_time_from:
+        return False
+    if sail_time_to and sail > sail_time_to:
+        return False
+    return True
+
+
+def _format_trip_seat_summary(seats: list[dict], name_key: str = "className") -> str:
+    if not seats:
+        return "无"
+    parts = []
+    for seat in seats:
+        name = seat.get(name_key) or seat.get("seatClassName") or seat.get("name") or "未知舱位"
+        parts.append(f"{name}×{seat.get('pubCurrentCount', 0)}")
+    return "、".join(parts)
+
+
+def build_no_trip_log_message(
+    trips: list[dict],
+    preferred_seats: list[str],
+    sail_time_from: str,
+    sail_time_to: str,
+    require_vehicle: bool,
+) -> str:
+    scoped_trips = [t for t in trips if _trip_in_time_range(t, sail_time_from, sail_time_to)]
+    scope_label = (
+        f"{sail_time_from or '--:--'}~{sail_time_to or '--:--'}"
+        if sail_time_from or sail_time_to else "全部时段"
+    )
+    if not scoped_trips:
+        return f"未找到合适的班次，继续轮询... 当前筛选时段 {scope_label} 内无班次"
+
+    preferred_label = "不限" if not preferred_seats else "/".join(preferred_seats)
+    trip_parts = []
+    for trip in scoped_trips:
+        status = "开售" if trip.get("onSale", 1) else "未开售"
+        line_name = trip.get("lineName") or ""
+        ship_name = trip.get("shipName") or trip.get("ship_name") or ""
+        seat_summary = _format_trip_seat_summary(trip.get("seatClasses") or [])
+        part = (
+            f"{_trip_sail_time(trip) or '--:--'} {ship_name or '未同步船名'}"
+            f"{f' {line_name}' if line_name else ''}"
+            f" [{status}] 客舱:{seat_summary}"
+        )
+        if require_vehicle:
+            car_summary = _format_trip_seat_summary(trip.get("driverSeatClass") or [])
+            part += f" 车位:{car_summary}"
+        trip_parts.append(part)
+
+    return (
+        f"未找到合适的班次，继续轮询... 时段:{scope_label}，舱位偏好:{preferred_label}"
+        f"{'，需同时有车位' if require_vehicle else ''}。"
+        f" 当前班次：{'；'.join(trip_parts)}"
+    )
+
+
+def decide_start_action(trigger_type: str, trigger_value: str, travel_date: str, now: datetime) -> StartDecision:
+    sale_datetime = _get_poll_sale_start(travel_date)
+    sale_date = sale_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+    trigger_at = None
+
+    if trigger_type == "schedule":
+        trigger_at = _parse_schedule_datetime(trigger_value)
+        if now < trigger_at:
+            return StartDecision(
+                action="delay_until_trigger_value",
+                run_at=trigger_at,
+                sale_datetime=sale_datetime,
+                trigger_at=trigger_at,
+            )
+
+    if now < sale_date:
+        run_at = (now + timedelta(days=1)).replace(hour=6, minute=40, second=0, microsecond=0)
+        return StartDecision(
+            action="schedule_next_day_0640",
+            run_at=run_at,
+            sale_datetime=sale_datetime,
+            trigger_at=trigger_at,
+        )
+
+    if now < sale_datetime:
+        run_at = now.replace(hour=6, minute=40, second=0, microsecond=0)
+        return StartDecision(
+            action="schedule_today_0640",
+            run_at=run_at,
+            sale_datetime=sale_datetime,
+            trigger_at=trigger_at,
+        )
+
+    return StartDecision(
+        action="poll_now",
+        sale_datetime=sale_datetime,
+        trigger_at=trigger_at,
+    )
+
+
+def _schedule_task_activation(task_id: int, run_at: datetime):
+    try:
+        _schedule_job(task_id, run_at, _activate_scheduled_task)
+        logger.info(f"Task#{task_id} 已排队到指定时间 {run_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    except Exception as e:
+        logger.error(f"Task#{task_id} 定时排队失败: {e}")
+
+
+def _activate_scheduled_task(task_id: int):
+    from src.database import SessionLocal
+    from src.models import Task
+
+    db = SessionLocal()
+    try:
+        task = db.query(Task).get(task_id)
+        if not task or task.status not in ("pending", "running", "waiting"):
+            return
+        _write_log(db, task_id, "INFO", "已到定时时间，进入开售规则判断")
+    finally:
+        db.close()
+
+    start_task(task_id, bypass_schedule=True)
+
+
 def _run_task(task_id: int):
     """实际执行抢票逻辑的函数（在线程池中运行）"""
     from src.database import SessionLocal
@@ -126,8 +260,8 @@ def _run_task(task_id: int):
             _reschedule_next_day_0640(task_id)
             return
 
-        # 子任务（等待主任务注入班次后直接下单）
-        if getattr(task, "parent_task_id", None) and getattr(task, "linked_trip_json", None):
+        # 拆单子任务（已拿到主任务班次后直接下单）
+        if getattr(task, "linked_trip_json", None) and getattr(task, "parent_task_id", None):
             trip = json.loads(task.linked_trip_json)
             pax_ids = json.loads(task.passenger_ids or "[]")
             preferred_seats = [s.strip() for s in (task.seat_class or "").split(",") if s.strip()]
@@ -176,12 +310,15 @@ def _run_task(task_id: int):
 
         backend = get_backend(db)
 
-        log("INFO", "查询余票...")
+        query_path = "/line/ferry/enq" if bool(task.vehicle_id) else "/line/ship/enq"
+        query_mode = "人车票接口" if bool(task.vehicle_id) else "旅客票接口"
+        log("INFO", f"开始查询余票（{query_mode} {query_path}）...")
         trips = backend.query_trips(
             account, db,
             task.departure_num,
             task.destination_num,
             task.travel_date,
+            require_vehicle=bool(task.vehicle_id),
         )
 
         preferred_seats = [s.strip() for s in (task.seat_class or "").split(",") if s.strip()]
@@ -193,7 +330,16 @@ def _run_task(task_id: int):
             require_vehicle=bool(task.vehicle_id),
         )
         if not trip:
-            log("INFO", "未找到合适的班次，继续轮询...")
+            log(
+                "INFO",
+                build_no_trip_log_message(
+                    trips,
+                    preferred_seats,
+                    getattr(task, "sail_time_from", "") or "",
+                    getattr(task, "sail_time_to", "") or "",
+                    bool(task.vehicle_id),
+                ),
+            )
             _reschedule_poll_immediately(task_id)
             return
 
@@ -225,15 +371,23 @@ def _run_task(task_id: int):
             # 保存订单记录
             _save_order(db, task, trip, result)
             # 触发关联子任务
-            _trigger_child_tasks(db, task_id, trip, log)
+            _trigger_split_tasks(db, task_id, trip, log)
             notify_booked(result.get("order_id") or "未知", route, task.travel_date,
                           result.get("payment_expire_at", ""))
             stop_task(task_id)
         else:
+            if result.get("order_id"):
+                log("WARN", f"下单失败（订单号 {result['order_id']}）：{result.get('message', '未知错误')}")
+            else:
+                log("WARN", f"下单失败：{result.get('message', '未知错误')}")
             reschedule = True
 
     except Exception as e:
         logger.exception(f"Task#{task_id} 异常：{e}")
+        try:
+            log("ERROR", f"执行异常：{e}")
+        except Exception:
+            pass
         notify_failed(task_id, f"Task#{task_id} 执行异常: {e}")
     finally:
         db.close()
@@ -268,8 +422,8 @@ def _save_order(db, task, trip, result):
         logger.warning(f"保存订单记录失败: {e}")
 
 
-def _trigger_child_tasks(db, parent_task_id: int, trip: dict, log_fn):
-    """主任务下单成功后，将班次注入所有 waiting 子任务并立刻触发"""
+def _trigger_split_tasks(db, parent_task_id: int, trip: dict, log_fn):
+    """主任务下单成功后，将班次注入所有 waiting 关联子任务并立刻触发。"""
     from src.models import Task
     children = db.query(Task).filter(
         Task.parent_task_id == parent_task_id,
@@ -286,7 +440,7 @@ def _trigger_child_tasks(db, parent_task_id: int, trip: dict, log_fn):
             logger.warning(f"触发子任务 Task#{child.id} 失败: {e}")
 
 
-def start_task(task_id: int):
+def start_task(task_id: int, bypass_schedule: bool = False):
     """注册并立即触发任务"""
     from src.database import SessionLocal
     from src.models import Task
@@ -299,35 +453,62 @@ def start_task(task_id: int):
         # 先移除旧任务（若有）
         _remove_existing_job(task_id)
 
-        # 刷票时间限制：
-        # - 开售日为包含出行日当天在内的提前 7 天
-        # - 例如 5 月 3 日的票，在 4 月 27 日 06:50 开始查票
-        now = datetime.now()
-        sale_datetime = _get_poll_sale_start(task.travel_date)  # 开售日 06:40
-        sale_date = sale_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+        if getattr(task, "linked_trip_json", None) and getattr(task, "parent_task_id", None):
+            task.status = "running"
+            db.commit()
+            _write_log(db, task_id, "INFO", "关联任务已获取主任务班次，立即开始下单")
+            _reschedule_poll_immediately(task_id)
+            return
 
-        if now < sale_date:
-            # 情况3：now 在开售日之前 → 每日 06:40 检查一次
+        now = datetime.now()
+        decision = decide_start_action(
+            task.trigger_type,
+            task.trigger_value,
+            task.travel_date,
+            now,
+        ) if not bypass_schedule else decide_start_action("poll", "", task.travel_date, now)
+
+        if task.trigger_type == "schedule" and not bypass_schedule:
+            if decision.action == "delay_until_trigger_value":
+                task.status = "waiting"
+                db.commit()
+                _write_log(
+                    db,
+                    task_id,
+                    "INFO",
+                    f"已排队到指定时间 {decision.run_at.strftime('%Y-%m-%d %H:%M:%S')}，到点后进入开售规则判断",
+                )
+                _schedule_task_activation(task_id, decision.run_at)
+                return
+            _write_log(db, task_id, "INFO", "定时时间已过，按当前开售规则继续处理")
+
+        if decision.action == "schedule_next_day_0640":
+            task.status = "waiting"
+            db.commit()
             _write_log(db, task_id, "INFO", (
-                f"开售日之前（开售日：{sale_datetime.strftime('%Y-%m-%d')}），"
-                f"将于每天 06:40 检查是否开放抢票"
+                f"开售日之前（开售日：{decision.sale_datetime.strftime('%Y-%m-%d')}），"
+                f"下次检查时间：{decision.run_at.strftime('%Y-%m-%d %H:%M:%S')}"
             ))
             _reschedule_next_day_0640(task_id)
-        elif now < sale_datetime:
-            # 情况1：now 在开售日当天且在 06:40 之前 → 调度到今日 06:40，无需查询
+            return
+
+        if decision.action == "schedule_today_0640":
+            task.status = "waiting"
+            db.commit()
             _write_log(db, task_id, "INFO", (
-                f"开售日当天 06:40 前（开售日：{sale_datetime.strftime('%Y-%m-%d')}）,"
-                f"将于今日 06:40 开始抢票"
+                f"开售日当天 06:40 前（开售日：{decision.sale_datetime.strftime('%Y-%m-%d')}），"
+                f"将于 {decision.run_at.strftime('%Y-%m-%d %H:%M:%S')} 开始抢票"
             ))
             _reschedule_today_0640(task_id)
             return
-        else:
-            # 情况2：now 在开售日当天且在 06:40 或之后 → 立即开始高频轮询
-            _write_log(db, task_id, "INFO", (
-                f"已到开售日当天 06:40 或之后（开售日：{sale_datetime.strftime('%Y-%m-%d')}）,"
-                f"立即开始抢票"
-            ))
-            _reschedule_poll_immediately(task_id)
+
+        task.status = "running"
+        db.commit()
+        _write_log(db, task_id, "INFO", (
+            f"已到开售日当天 06:40 或之后（开售日：{decision.sale_datetime.strftime('%Y-%m-%d')}），"
+            f"立即开始抢票"
+        ))
+        _reschedule_poll_immediately(task_id)
     finally:
         db.close()
 

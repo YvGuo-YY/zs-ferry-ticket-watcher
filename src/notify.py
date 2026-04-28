@@ -7,6 +7,10 @@ from src.models import Setting
 DEFAULT_SERVER = "https://api.day.app"
 
 
+def split_bark_keys(raw: str) -> list[str]:
+    return [k.strip() for k in (raw or "").replace(",", "\n").splitlines() if k.strip()]
+
+
 def _get_bark_config() -> tuple[list[str], str]:
     """返回 (keys列表, server)，keys 支持换行/逗号分隔的多个 Key。"""
     db = SessionLocal()
@@ -15,8 +19,7 @@ def _get_bark_config() -> tuple[list[str], str]:
         srv_row = db.query(Setting).filter_by(key="bark_server").first()
         raw = key_row.value if key_row else ""
         server = (srv_row.value if srv_row else "") or DEFAULT_SERVER
-        # 支持换行或逗号分隔
-        keys = [k.strip() for k in raw.replace(",", "\n").splitlines() if k.strip()]
+        keys = split_bark_keys(raw)
         return keys, server
     finally:
         db.close()
@@ -31,13 +34,12 @@ def _send_to_key(key: str, server: str, payload: dict) -> bool:
         return False
 
 
-def send_bark(title: str, body: str, url: str = "", sound: str = "birdsong") -> bool:
+def send_bark(title: str, body: str, url: str = "", sound: str = "birdsong",level='active',call=0) -> bool:
     """向所有已配置的 Bark Key 发送通知，至少一个成功则返回 True。"""
     keys, bark_server = _get_bark_config()
     if not keys:
         return False
-
-    payload = {"title": title, "body": body, "sound": sound}
+    payload = {"title": title, "body": body, "sound": sound, "level": level, "call": call}
     if url:
         payload["url"] = url
 
@@ -54,6 +56,8 @@ def notify_booked(order_id: str, route: str, travel_date: str, payment_expire_at
         title="🎫 抢票成功！",
         body=f"{route} {travel_date}\n订单号：{order_id}\n{pay_line}",
         sound="success",
+        level='critical',
+        call=1,
     )
 
 

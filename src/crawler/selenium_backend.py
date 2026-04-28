@@ -68,11 +68,12 @@ class SeleniumBackend(CrawlerBackend):
         start_port_no: int,
         end_port_no: int,
         date: str,
+        require_vehicle: bool = False,
     ) -> list:
         from src.crawler.query import query_trips as _query
         driver, _ = _selenium_ensure_logged_in(account, db)
         try:
-            return _query(driver, start_port_no, end_port_no, date)
+            return _query(driver, start_port_no, end_port_no, date, require_vehicle=require_vehicle)
         finally:
             try:
                 driver.quit()

@@ -34,6 +34,7 @@ class TripQueryRequest(BaseModel):
     start_port_no: int
     end_port_no: int
     date: str  # YYYY-MM-DD
+    require_vehicle: bool = False
 
 
 @router.post("/query")
@@ -49,7 +50,14 @@ def query_trips(
 
     backend = get_backend(db)
     try:
-        trips = backend.query_trips(acc, db, body.start_port_no, body.end_port_no, body.date)
+        trips = backend.query_trips(
+            acc,
+            db,
+            body.start_port_no,
+            body.end_port_no,
+            body.date,
+            require_vehicle=body.require_vehicle,
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

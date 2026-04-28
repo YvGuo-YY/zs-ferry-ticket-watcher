@@ -97,6 +97,43 @@ body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f
 
 /* ── 端口选择 ────────────────────────── */
 .port-select-container { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+/* ── 订单列表 ────────────────────────── */
+.orders-page { display: flex; flex-direction: column; gap: 14px; }
+.orders-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+}
+.orders-filter-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.orders-meta-group { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.order-filter-tag { cursor: pointer; border-radius: 999px; padding: 0 4px; }
+.orders-empty {
+  text-align: center; padding: 52px 24px; color: #8c8c8c;
+  background: #fff; border-radius: 12px; box-shadow: 0 2px 10px rgba(15, 35, 60, 0.05);
+}
+.orders-table-card {
+  background: #fff; border-radius: 14px; box-shadow: 0 4px 18px rgba(15, 35, 60, 0.06);
+  overflow: hidden;
+}
+.orders-table .el-table__cell { padding: 12px 0; vertical-align: top; word-break: normal; }
+.order-id {
+  font-family: 'SFMono-Regular', 'Consolas', monospace; font-size: 13px; font-weight: 600; color: #364152;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.route-cell, .sail-cell, .travel-date-cell { display: flex; flex-direction: column; gap: 4px; line-height: 1.45; min-width: 0; }
+.route-main, .sail-main, .travel-date-main {
+  font-size: 14px; color: #1f2937; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.route-sub, .sail-sub, .travel-date-sub { font-size: 12px; color: #8a94a6; }
+.compact-passengers { display: flex; flex-wrap: wrap; gap: 6px; }
+.deadline-stack { display: flex; flex-direction: column; gap: 4px; line-height: 1.35; }
+.deadline-main { font-size: 14px; font-weight: 600; }
+.deadline-sub { font-size: 12px; color: #98a2b3; }
+.orders-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.order-detail-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; margin-bottom: 16px; font-size: 13px; color: #444;
+}
+.order-detail-grid .muted { color: #8a94a6; }
 </style>
 </head>
 <body>
@@ -107,7 +144,7 @@ body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f
 <script src="https://unpkg.com/@element-plus/icons-vue/dist/index.iife.min.js"></script>
 
 <script>
-const { createApp, ref, reactive, computed, onMounted, watch, nextTick } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
 const { ElMessage, ElMessageBox, ElNotification } = ElementPlus;
 
 // ─── API 工具 ──────────────────────────────────────────────
@@ -332,17 +369,18 @@ const TasksView = {
             <div class="task-meta-item">票种：<span>{{ group.main.ticket_type }}</span></div>
             <div class="task-meta-item" v-if="group.main.seat_classes && group.main.seat_classes.length">舱位：<span>{{ group.main.seat_classes.join(' / ') }}</span></div>
             <div class="task-meta-item" v-if="group.main.vehicle_id">车牌：<span>{{ vehicles.find(v=>v.id===group.main.vehicle_id)?.plate_number || group.main.vehicle_id }}</span></div>
+            <div class="task-meta-item" v-if="splitSummary(group.main)">拆单：<span>{{ splitSummary(group.main) }}</span></div>
             <div class="task-meta-item">触发：<span>{{ triggerLabel(group.main) }}</span></div>
             <div class="task-meta-item">创建：<span>{{ fmtDate(group.main.created_at) }}</span></div>
           </div>
           <div class="task-footer">
-            <div class="task-passengers">旅客 {{ group.main.passenger_ids.length }} 人{{ group.main.child_task_ids.length ? ' · 含关联单' : '' }}</div>
+            <div class="task-passengers">旅客 {{ displayPassengerCount(group.main) }} 人</div>
             <div style="display:flex;gap:8px" @click.stop>
               <el-button v-if="group.main.status==='pending'||group.main.status==='stopped'||group.main.status==='failed'"
                 type="primary" size="small" @click="startTask(group.main)">启动</el-button>
-              <el-button v-if="group.main.status==='running'"
+              <el-button v-if="group.main.status==='running'||group.main.status==='waiting'"
                 type="warning" size="small" @click="stopTask(group.main)">停止</el-button>
-              <el-button v-if="group.main.status!=='running'"
+              <el-button v-if="group.main.status!=='running'&&group.main.status!=='waiting'"
                 size="small" plain @click="openEdit(group.main)">编辑</el-button>
               <el-button type="danger" size="small" plain @click="deleteTask(group.main)">删除</el-button>
             </div>
@@ -363,7 +401,7 @@ const TasksView = {
               <div class="task-meta-item" v-if="child.seat_classes && child.seat_classes.length">舱位：<span>{{ child.seat_classes.join(' / ') }}</span></div>
             </div>
             <div class="task-footer">
-              <div class="task-passengers" style="color:#1a6fb3;font-size:12px">等待 #{{ child.parent_task_id }} 成功后自动触发</div>
+              <div class="task-passengers" style="color:#1a6fb3;font-size:12px">超员拆单 · 等待 #{{ child.parent_task_id }} 抢到车票后同班次下单</div>
               <div @click.stop style="display:flex;gap:8px">
                 <el-button size="small" plain @click="openEdit(child)">编辑</el-button>
                 <el-button type="danger" size="small" plain @click="deleteTask(child)">删除</el-button>
@@ -405,8 +443,20 @@ const TasksView = {
             <el-radio value="小客车及随车人员">小客车</el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="旅客" required>
+          <div style="width:100%">
+            <el-checkbox-group v-model="form.passenger_ids">
+              <el-checkbox v-for="p in passengers" :key="p.id" :value="p.id" style="margin-bottom:4px;display:block">
+                {{ p.name }}（{{ p.id_type }}：{{ p.id_number }}）
+              </el-checkbox>
+            </el-checkbox-group>
+            <div v-if="passengers.length===0" style="color:#999;font-size:12px">
+              请先在"旅客管理"中添加旅客
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item v-if="form.ticket_type==='\u5c0f\u5ba2\u8f66\u53ca\u968f\u8f66\u4eba\u5458'" label="车辆" required>
-          <el-select v-model="form.vehicle_id" placeholder="选择车辆" style="width:100%" clearable @change="form.driver_passenger_id=null">
+          <el-select v-model="form.vehicle_id" placeholder="选择车辆" style="width:100%" clearable>
             <el-option v-for="v in vehicles" :key="v.id"
               :label="v.plate_number + (v.owner_name ? ' — ' + v.owner_name : '') + (v.vehicle_type ? ' (' + v.vehicle_type + ')' : '')"
               :value="v.id" />
@@ -415,7 +465,7 @@ const TasksView = {
             请先在“车辆管理”中添加车辆
           </div>
         </el-form-item>
-        <el-form-item v-if="form.ticket_type==='\u5c0f\u5ba2\u8f66\u53ca\u968f\u8f66\u4eba\u5458' && form.vehicle_id" label="驾驶员" required>
+        <el-form-item v-if="form.ticket_type==='\u5c0f\u5ba2\u8f66\u53ca\u968f\u8f66\u4eba\u5458'" label="驾驶员" required>
           <el-select v-model="form.driver_passenger_id" placeholder="从已选旅客中选择驾驶员" style="width:100%">
             <el-option v-for="p in passengers.filter(p=>form.passenger_ids.includes(p.id))" :key="p.id"
               :label="p.name + '（' + p.id_type + '：' + p.id_number + '）'"
@@ -443,49 +493,41 @@ const TasksView = {
           </div>
           <div style="font-size:12px;color:#aaa;margin-top:2px">不填则不限开航时段</div>
         </el-form-item>
-        <el-form-item label="旅客" required>
-          <div style="width:100%">
-            <el-checkbox-group v-model="form.passenger_ids">
-              <el-checkbox v-for="p in passengers" :key="p.id" :value="p.id" style="margin-bottom:4px;display:block">
-                {{ p.name }}（{{ p.id_type }}：{{ p.id_number }}）
-              </el-checkbox>
-            </el-checkbox-group>
-            <div v-if="passengers.length===0" style="color:#999;font-size:12px">
-              请先在"旅客管理"中添加旅客
+        <template v-if="form.ticket_type==='\u5c0f\u5ba2\u8f66\u53ca\u968f\u8f66\u4eba\u5458'">
+          <el-divider />
+          <div style="margin-bottom:12px">
+            <div v-if="splitEligible && !linkedForm.enabled">
+              <el-button size="small" @click="linkedForm.enabled=true">启用超员拆单</el-button>
+              <div style="font-size:12px;color:#aaa;margin-top:8px">
+                超过 3 名旅客后，可手动拆成“主任务仅驾驶员 + 旅客票任务”。
+              </div>
             </div>
+            <template v-else-if="linkedForm.enabled">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-weight:600;color:#1a6fb3">超员拆单</span>
+                <el-button size="small" text @click="linkedForm.enabled=false">移除</el-button>
+              </div>
+              <div style="font-size:12px;color:#666;margin-bottom:8px">
+                主任务仅保留驾驶员 {{ driverPassengerName || '—' }}；其余 {{ splitPassengerIds.length }} 名旅客将进入旅客票任务。
+              </div>
+              <div style="font-size:12px;color:#aaa;margin-bottom:8px" v-if="splitPassengerNames.length">
+                拆单旅客：{{ splitPassengerNames.join('、') }}
+              </div>
+              <div style="font-size:12px;color:#aaa;margin-bottom:8px">
+                抢到车票后，关联旅客单会直接复用同一班次下单。
+              </div>
+              <el-form-item label="拆单舱位" style="margin-bottom:0">
+                <el-checkbox-group v-model="linkedForm.seat_classes">
+                  <el-checkbox value="上舱">上舱</el-checkbox>
+                  <el-checkbox value="中舱">中舱</el-checkbox>
+                  <el-checkbox value="下前舱">下前舱</el-checkbox>
+                  <el-checkbox value="下舱卧">下舱卧</el-checkbox>
+                  <el-checkbox value="商务B">商务B</el-checkbox>
+                </el-checkbox-group>
+              </el-form-item>
+            </template>
           </div>
-        </el-form-item>
-
-        <!-- 关联旅客单（仅新建时显示） -->
-        <template v-if="!editMode">
-        <el-divider />
-        <div style="margin-bottom:12px">
-          <el-button v-if="!showLinked" size="small" @click="showLinked=true">+ 添加关联旅客单（超员拆单）</el-button>
-          <template v-else>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <span style="font-weight:600;color:#1a6fb3">🔗 关联旅客单</span>
-              <el-button size="small" text @click="showLinked=false;linkedForm.passenger_ids=[];linkedForm.seat_classes=[]">移除</el-button>
-            </div>
-            <div style="font-size:12px;color:#aaa;margin-bottom:8px">主任务（车辆票）下单成功后，立即对同一班次触发此旅客单</div>
-            <el-form-item label="关联旅客" style="margin-bottom:8px">
-              <el-checkbox-group v-model="linkedForm.passenger_ids">
-                <el-checkbox v-for="p in passengers" :key="p.id" :value="p.id" style="margin-bottom:4px;display:block">
-                  {{ p.name }}（{{ p.id_type }}：{{ p.id_number }}）
-                </el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-            <el-form-item label="舱位偏好" style="margin-bottom:0">
-              <el-checkbox-group v-model="linkedForm.seat_classes">
-                <el-checkbox value="上舱">上舱</el-checkbox>
-                <el-checkbox value="中舱">中舱</el-checkbox>
-                <el-checkbox value="下前舱">下前舱</el-checkbox>
-                <el-checkbox value="下舱卧">下舱卧</el-checkbox>
-                <el-checkbox value="商务B">商务B</el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-          </template>
-        </div>
-        </template><!-- end v-if="!editMode" -->
+        </template>
 
         <el-form-item label="触发方式" required>
           <el-radio-group v-model="form.trigger_type">
@@ -546,10 +588,10 @@ const TasksView = {
     const scheduleTime = ref("");
     const sailTimeFrom = ref("");
     const sailTimeTo = ref("");
-    const showLinked = ref(false);
-    const linkedForm = reactive({ passenger_ids: [], seat_classes: [] });
+    const linkedForm = reactive({ enabled: false, seat_classes: [] });
     const editMode = ref(false);
     const editTaskId = ref(null);
+    const CAR_TICKET_TYPE = "小客车及随车人员";
 
     const form = reactive({
       account_id: null,
@@ -578,16 +620,51 @@ const TasksView = {
         .map(r => ({ num: r.end_port_num, name: r.end_port_name }));
     });
 
+    const splitEligible = computed(() =>
+      form.ticket_type === CAR_TICKET_TYPE &&
+      form.passenger_ids.length > 3 &&
+      !!form.driver_passenger_id
+    );
+
+    const splitPassengerIds = computed(() =>
+      form.passenger_ids.filter(id => id !== form.driver_passenger_id)
+    );
+
+    const driverPassengerName = computed(() =>
+      passengers.value.find(p => p.id === form.driver_passenger_id)?.name || ""
+    );
+
+    const splitPassengerNames = computed(() =>
+      passengers.value
+        .filter(p => splitPassengerIds.value.includes(p.id))
+        .map(p => p.name)
+    );
+
     function onDepartureChange() { destinationNum.value = null; }
 
     function disablePassedDate(d) { return d < new Date(new Date().setHours(0,0,0,0)); }
 
+    function findRelatedSplitTask(mainTaskId) {
+      return tasks.value.find(t => t.parent_task_id === mainTaskId) || null;
+    }
+
+    function splitSummary(task) {
+      const related = findRelatedSplitTask(task.id);
+      if (related) return "超员拆单";
+      return "";
+    }
+
+    function displayPassengerCount(task) {
+      const related = findRelatedSplitTask(task.id);
+      return task.passenger_ids.length + (related ? related.passenger_ids.length : 0);
+    }
+
     const groupedTasks = computed(() => {
       return tasks.value
-        .filter(t => !t.parent_task_id)
+        .filter(t => !t.parent_task_id && !t.split_source_task_id)
         .map(t => ({
           main: t,
-          children: tasks.value.filter(c => c.parent_task_id === t.id),
+          children: tasks.value.filter(c => c.parent_task_id === t.id || c.split_source_task_id === t.id),
         }));
     });
 
@@ -617,12 +694,20 @@ const TasksView = {
       form.driver_passenger_id = null;
       form.passenger_ids = [];
       form.trigger_type = "poll";
+      scheduleTime.value = "";
       sailTimeFrom.value = "";
       sailTimeTo.value = "";
-      showLinked.value = false;
-      linkedForm.passenger_ids = [];
+      linkedForm.enabled = false;
       linkedForm.seat_classes = [];
       createDrawer.value = true;
+    }
+
+    function buildLinkedPassengerPayload() {
+      if (!linkedForm.enabled) return null;
+      return {
+        enabled: true,
+        seat_classes: [...linkedForm.seat_classes],
+      };
     }
 
     async function submitCreate() {
@@ -630,13 +715,15 @@ const TasksView = {
       if (!departureNum.value) return ElMessage.warning("请选择出发港");
       if (!destinationNum.value) return ElMessage.warning("请选择到达港");
       if (!form.travel_date) return ElMessage.warning("请选择日期");
+      if (form.trigger_type === "schedule" && !scheduleTime.value)
+        return ElMessage.warning("定时开售请选择触发时间");
       if (!form.passenger_ids.length) return ElMessage.warning("请选择至少一名旅客");
       if (form.ticket_type === "小客车及随车人员" && !form.vehicle_id)
         return ElMessage.warning("小客车票请选择车辆");
-      if (form.ticket_type === "小客车及随车人员" && form.vehicle_id && !form.driver_passenger_id)
+      if (form.ticket_type === "小客车及随车人员" && !form.driver_passenger_id)
         return ElMessage.warning("小客车票请指定驾驶员");
-      if (showLinked.value && linkedForm.passenger_ids.length === 0)
-        return ElMessage.warning("关联旅客单至少选择一名旅客");
+      if (linkedForm.enabled && !splitEligible.value)
+        return ElMessage.warning("启用超员拆单前，请确认旅客人数超过 3 人且已指定驾驶员");
 
       const dep = departurePorts.value.find(p => p.num === departureNum.value);
       const dst = destinationPorts.value.find(p => p.num === destinationNum.value);
@@ -653,16 +740,14 @@ const TasksView = {
           trigger_value: trigVal,
           sail_time_from: sailTimeFrom.value || "",
           sail_time_to: sailTimeTo.value || "",
-          linked_passenger_task: (showLinked.value && linkedForm.passenger_ids.length)
-            ? { passenger_ids: linkedForm.passenger_ids, seat_classes: linkedForm.seat_classes }
-            : null,
+          linked_passenger_task: buildLinkedPassengerPayload(),
         });
         await http.post(`/api/tasks/${task.id}/start`);
-        ElMessage.success(showLinked.value && linkedForm.passenger_ids.length
-          ? "任务已创建并启动，关联旅客单将在车辆票下单成功后自动触发"
+        ElMessage.success(linkedForm.enabled
+          ? "任务已创建并启动，关联旅客拆单将在车辆票成功后自动触发"
           : "任务已创建并启动");
         createDrawer.value = false;
-        load();
+        await load();
       } catch (e) {
         ElMessage.error(e.message);
       } finally {
@@ -671,8 +756,20 @@ const TasksView = {
     }
 
     function openEdit(t) {
+      if (t.split_source_task_id && t.split_source_task_id !== t.id) {
+        const sourceTask = tasks.value.find(task => task.id === t.split_source_task_id);
+        if (!sourceTask) {
+          ElMessage.warning("请到来源主任务中调整拆单配置");
+          return;
+        }
+        t = sourceTask;
+      }
       editMode.value = true;
       editTaskId.value = t.id;
+      const relatedSplitTask = findRelatedSplitTask(t.id);
+      const combinedPassengerIds = relatedSplitTask
+        ? [...new Set([...t.passenger_ids, ...relatedSplitTask.passenger_ids])]
+        : [...t.passenger_ids];
       // 填充路线（从 routes 反查 num）
       departureNum.value = t.departure_num;
       destinationNum.value = t.destination_num;
@@ -684,25 +781,28 @@ const TasksView = {
       form.sail_time_to = t.sail_time_to || "";
       form.vehicle_id = t.vehicle_id || null;
       form.driver_passenger_id = t.driver_passenger_id || null;
-      form.passenger_ids = [...t.passenger_ids];
+      form.passenger_ids = combinedPassengerIds;
       form.trigger_type = t.trigger_type;
       sailTimeFrom.value = t.sail_time_from || "";
       sailTimeTo.value = t.sail_time_to || "";
       scheduleTime.value = t.trigger_type === "schedule" ? t.trigger_value : "";
-      showLinked.value = false;
-      linkedForm.passenger_ids = [];
-      linkedForm.seat_classes = [];
+      linkedForm.enabled = !!relatedSplitTask;
+      linkedForm.seat_classes = relatedSplitTask ? [...(relatedSplitTask.seat_classes || [])] : [];
       createDrawer.value = true;
     }
 
     async function submitEdit() {
       if (!form.account_id) return ElMessage.warning("请选择 Ferry 账号");
       if (!form.travel_date) return ElMessage.warning("请选择日期");
+      if (form.trigger_type === "schedule" && !scheduleTime.value)
+        return ElMessage.warning("定时开售请选择触发时间");
       if (!form.passenger_ids.length) return ElMessage.warning("请选择至少一名旅客");
       if (form.ticket_type === "小客车及随车人员" && !form.vehicle_id)
         return ElMessage.warning("小客车票请选择车辆");
-      if (form.ticket_type === "小客车及随车人员" && form.vehicle_id && !form.driver_passenger_id)
+      if (form.ticket_type === "小客车及随车人员" && !form.driver_passenger_id)
         return ElMessage.warning("小客车票请指定驾驶员");
+      if (linkedForm.enabled && !splitEligible.value)
+        return ElMessage.warning("启用超员拆单前，请确认旅客人数超过 3 人且已指定驾驶员");
 
       const trigVal = form.trigger_type === "poll" ? "" : scheduleTime.value;
       creating.value = true;
@@ -719,10 +819,11 @@ const TasksView = {
           passenger_ids: form.passenger_ids,
           trigger_type: form.trigger_type,
           trigger_value: trigVal,
+          linked_passenger_task: buildLinkedPassengerPayload(),
         });
         ElMessage.success("任务已更新");
         createDrawer.value = false;
-        load();
+        await load();
       } catch (e) {
         ElMessage.error(e.message);
       } finally {
@@ -776,6 +877,24 @@ const TasksView = {
 
     watch(logDrawer, v => { if (!v && wsConn) { wsConn.close(); wsConn = null; } });
 
+    watch(() => [...form.passenger_ids], (ids) => {
+      if (form.driver_passenger_id && !ids.includes(form.driver_passenger_id)) {
+        form.driver_passenger_id = null;
+      }
+    });
+
+    watch(() => form.ticket_type, (ticketType) => {
+      if (ticketType !== CAR_TICKET_TYPE) {
+        form.vehicle_id = null;
+        form.driver_passenger_id = null;
+        linkedForm.enabled = false;
+      }
+    });
+
+    watch(splitEligible, (eligible) => {
+      if (!eligible) linkedForm.enabled = false;
+    });
+
     function triggerLabel(t) {
       return t.trigger_type === "poll" ? `随机轮询(1~10s)` : `定时 ${t.trigger_value}`;
     }
@@ -787,7 +906,9 @@ const TasksView = {
              destinationPorts, scheduleTime, sailTimeFrom, sailTimeTo, onDepartureChange,
              disablePassedDate, openCreate, submitCreate, startTask, stopTask,
              deleteTask, openLogs, logTitle, triggerLabel, fmtDate, statusLabel, statusType,
-             showLinked, linkedForm, groupedTasks, editMode, editTaskId, openEdit, submitEdit };
+             linkedForm, groupedTasks, editMode, editTaskId, openEdit, submitEdit,
+             splitEligible, splitPassengerIds, splitPassengerNames, driverPassengerName,
+             splitSummary, displayPassengerCount };
   }
 };
 
@@ -819,6 +940,12 @@ const TripsView = {
           <el-select v-model="query.end_port_no" placeholder="先选出发港" style="width:160px" :disabled="!query.start_port_no">
             <el-option v-for="p in destinationPorts" :key="p.num" :label="p.name" :value="p.num" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="票种">
+          <el-radio-group v-model="query.require_vehicle">
+            <el-radio :value="false">旅客票</el-radio>
+            <el-radio :value="true">人车票</el-radio>
+          </el-radio-group>
         </el-form-item>
         <el-form-item label="日期">
           <el-date-picker v-model="query.date" type="date" placeholder="选择日期"
@@ -893,6 +1020,7 @@ const TripsView = {
       start_port_no: null,
       end_port_no: null,
       date: new Date().toLocaleDateString("sv"),  // YYYY-MM-DD format
+      require_vehicle: false,
     });
 
     const departurePorts = computed(() => {
@@ -966,6 +1094,7 @@ const TripsView = {
           start_port_no: query.start_port_no,
           end_port_no: query.end_port_no,
           date: query.date,
+          require_vehicle: query.require_vehicle,
         });
         trips.value = res.trips || [];
         queried.value = true;
@@ -1747,9 +1876,13 @@ const SettingsView = {
       catch (e) { ElMessage.error(e.message); } finally { saving.value = false; }
     }
     async function testBark() {
+      if (!form.bark_key || !form.bark_key.trim()) return ElMessage.warning("请先填写 Bark Key");
       barkTesting.value = true;
       try {
-        const res = await http.post("/api/settings/test-bark");
+        const res = await http.post("/api/settings/test-bark", {
+          bark_key: form.bark_key,
+          bark_server: form.bark_server,
+        });
         if (res.success) ElMessage.success(res.message);
         else ElMessage.error(res.message);
       } catch (e) { ElMessage.error(e.message); } finally { barkTesting.value = false; }
@@ -1770,101 +1903,325 @@ const SettingsView = {
 // ══════════════════════════════════════════════════════════
 const OrdersView = {
   template: `
-  <div>
-    <div class="page-header">
+  <div class="orders-page">
+    <div class="page-header" style="margin-bottom:0">
       <h3>订单列表</h3>
-      <el-button @click="load" size="small">🔄 刷新</el-button>
     </div>
 
-    <div v-if="orders.length === 0" style="text-align:center;padding:60px;color:#999">
-      暂无订单记录，抢票成功后将自动生成
+    <div class="orders-toolbar">
+      <div class="orders-filter-group">
+          <el-select v-model="selectedAccountId" size="small" style="width:220px" @change="load">
+            <el-option label="全部账号" :value="null" />
+            <el-option
+              v-for="acc in accounts"
+              :key="acc.id"
+              :label="acc.phone + (acc.remark ? ' (' + acc.remark + ')' : '')"
+              :value="acc.id"
+            />
+          </el-select>
+          <el-tag
+            v-for="opt in statusOptions"
+            :key="opt.value"
+            :type="isStatusSelected(opt.value) ? opt.type : 'info'"
+            :effect="isStatusSelected(opt.value) ? 'dark' : 'plain'"
+            class="order-filter-tag"
+            @click="toggleStatus(opt.value)"
+          >{{ opt.label }}</el-tag>
+          <el-tag
+            :type="allStatusesSelected ? 'primary' : 'info'"
+            :effect="allStatusesSelected ? 'dark' : 'plain'"
+            class="order-filter-tag"
+            @click="selectAllStatuses"
+          >全部</el-tag>
+      </div>
+      <div class="orders-meta-group">
+        <span style="font-size:12px;color:#888" v-if="lastRefreshedAt">上次同步：{{ fmtDate(lastRefreshedAt) }}</span>
+        <el-button @click="refreshOrders(true)" :loading="refreshing" size="small">🔄 刷新</el-button>
+      </div>
     </div>
 
-    <el-table v-else :data="orders" border stripe>
-      <el-table-column label="订单号" prop="order_id" width="180">
+    <div v-if="orders.length === 0" class="orders-empty">
+      暂无订单记录，首次登录或刷新后会自动同步远端订单
+    </div>
+
+    <div v-else class="orders-table-card">
+    <el-table :data="orders" border stripe class="orders-table">
+      <el-table-column label="订单号" prop="order_id" width="196">
         <template #default="{row}">
           <el-tooltip :content="row.order_id" placement="top">
-            <span style="font-family:monospace;font-size:12px">{{ row.order_id }}</span>
+            <span class="order-id">{{ row.order_id }}</span>
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="航线" min-width="130">
-        <template #default="{row}">{{ row.departure_name }} → {{ row.destination_name }}</template>
-      </el-table-column>
-      <el-table-column label="出行日期" prop="travel_date" width="100" />
-      <el-table-column label="航班" width="130">
+      <el-table-column label="航线" min-width="220" show-overflow-tooltip>
         <template #default="{row}">
-          <span>{{ row.sail_time }}</span>
-          <span v-if="row.ship_name" style="color:#888;font-size:12px;margin-left:4px">{{ row.ship_name }}</span>
+          <el-tooltip :content="(row.departure_name || '') + ' → ' + (row.destination_name || '')" placement="top">
+            <div class="route-cell">
+              <div class="route-main">{{ row.departure_name }} → {{ row.destination_name }}</div>
+            </div>
+          </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="旅客" min-width="120">
+      <el-table-column label="出行日期" width="152">
         <template #default="{row}">
-          <el-tag v-for="p in row.passengers" :key="p" size="small" style="margin:2px">{{ p }}</el-tag>
+          <div class="travel-date-cell">
+            <div class="travel-date-main">{{ row.travel_date || '—' }}</div>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column label="支付截止" width="160">
+      <el-table-column label="航班" min-width="162">
         <template #default="{row}">
-          <span v-if="row.payment_expire_at" :style="isExpired(row) ? 'color:#f56c6c' : 'color:#67c23a'">
-            {{ row.payment_expire_at }}
-          </span>
-          <span v-else style="color:#aaa">—</span>
+          <div class="sail-cell">
+            <div class="sail-main">{{ row.sail_time || '—' }}</div>
+            <div class="sail-sub">{{ row.ship_name || '未同步船名' }}</div>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="航型" prop="clxm" width="124">
+        <template #default="{row}">
+          <span class="travel-date-main" style="font-size:13px;font-weight:500">{{ row.clxm || '—' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="旅客" min-width="180">
+        <template #default="{row}">
+          <div class="compact-passengers">
+            <el-tag v-for="p in row.passengers" :key="p" size="small">{{ p }}</el-tag>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="支付截止" width="168">
+        <template #default="{row}">
+          <div class="deadline-stack">
+            <span class="deadline-main" :style="paymentDeadlineStyle(row)">
+              {{ paymentDeadlineText(row) }}
+            </span>
+            <span v-if="row.status === 'pending_payment' && row.payment_expire_at" class="deadline-sub">
+              截止 {{ row.payment_expire_at }}
+            </span>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="110">
         <template #default="{row}">
-          <el-select v-model="row.status" size="small" style="width:96px" @change="updateStatus(row)">
-            <el-option label="待支付" value="pending_payment" />
-            <el-option label="已支付" value="paid" />
-            <el-option label="已取消" value="cancelled" />
-          </el-select>
+          <el-tag :type="statusTagType(row.status)" size="small">{{ row.status_label }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="下单时间" width="150">
-        <template #default="{row}">{{ fmtDate(row.created_at) }}</template>
-      </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="下单时间" width="188">
         <template #default="{row}">
-          <el-button size="small" type="primary" @click="openPay(row)">前往支付</el-button>
-          <el-button size="small" type="danger" plain @click="del(row)">删除</el-button>
+          <div class="travel-date-cell">
+            <div class="travel-date-main" style="font-size:13px;font-weight:500">{{ fmtDate(row.remote_created_at || row.created_at) }}</div>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="188" fixed="right">
+        <template #default="{row}">
+          <div class="orders-actions">
+            <el-button v-if="row.can_pay" size="small" type="primary" @click="openPay(row)">前往支付</el-button>
+            <el-button v-if="row.can_view_detail" size="small" @click="openDetail(row)">显示详情</el-button>
+            <el-button size="small" type="danger" plain @click="del(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
+    </div>
+
+    <el-drawer v-model="detailDrawer" title="订单详情" size="720px" direction="rtl">
+      <div v-loading="detailLoading">
+        <template v-if="detailOrder">
+          <div class="order-detail-grid">
+            <div>订单号：<span style="font-family:monospace">{{ detailOrder.order_id }}</span></div>
+            <div>状态：<el-tag :type="statusTagType(detailOrder.status)" size="small">{{ detailOrder.status_label }}</el-tag></div>
+            <div>航线：{{ detailOrder.departure_name }} → {{ detailOrder.destination_name }}</div>
+            <div>出行日期：{{ detailOrder.travel_date }}</div>
+            <div>航班：{{ detailOrder.sail_time || '—' }}</div>
+            <div>船名：{{ detailOrder.ship_name || '—' }}</div>
+            <div>航型：{{ detailOrder.clxm || '—' }}</div>
+            <div class="muted">上次同步：{{ fmtDate(detailOrder.remote_created_at || detailOrder.created_at) }}</div>
+          </div>
+          <el-table :data="detailOrder.order_items || []" border stripe>
+            <el-table-column label="旅客" prop="passName" width="100" />
+            <el-table-column label="身份信息" prop="credentialNum" min-width="170" />
+            <el-table-column label="航线" prop="lineName" min-width="120" />
+            <el-table-column label="舱位" prop="seatClassName" width="90" />
+            <el-table-column label="座位" prop="seatNumber" width="90" />
+            <el-table-column label="金额" width="90">
+              <template #default="{row}">¥{{ row.realFee }}</template>
+            </el-table-column>
+            <el-table-column label="航型" prop="clxm" min-width="110" />
+            <el-table-column label="航班类型" prop="hxlxm" min-width="110" />
+            <el-table-column label="创建时间" prop="createTime" width="160" />
+          </el-table>
+        </template>
+      </div>
+    </el-drawer>
   </div>
   `,
   setup() {
     const orders = ref([]);
+    const accounts = ref([]);
+    const selectedAccountId = ref(null);
+    const refreshing = ref(false);
+    const lastRefreshedAt = ref("");
+    const selectedStatuses = ref(["pending_payment", "paid"]);
+    const nowTs = ref(Date.now());
+    const detailDrawer = ref(false);
+    const detailLoading = ref(false);
+    const detailOrder = ref(null);
+    let refreshTimer = null;
+    let countdownTimer = null;
+    const statusOptions = [
+      { value: "pending_payment", label: "待支付", type: "warning" },
+      { value: "paid", label: "已支付", type: "success" },
+      { value: "cancelled", label: "已取消", type: "info" },
+    ];
+
+    const allStatusesSelected = computed(() =>
+      statusOptions.every(opt => selectedStatuses.value.includes(opt.value))
+    );
+
+    function statusFilterParam() {
+      if (allStatusesSelected.value) return "all";
+      return selectedStatuses.value.join(",");
+    }
 
     async function load() {
-      orders.value = await http.get("/api/orders/");
+      const filter = encodeURIComponent(statusFilterParam());
+      const accountQuery = selectedAccountId.value ? `&account_id=${selectedAccountId.value}` : "";
+      orders.value = await http.get(`/api/orders/?status_filter=${filter}${accountQuery}`);
+    }
+
+    async function loadAccounts() {
+      accounts.value = await http.get("/api/accounts/");
+    }
+
+    async function refreshOrders(showMessage = false) {
+      refreshing.value = true;
+      try {
+        const summary = await http.post("/api/orders/sync", selectedAccountId.value ? { account_id: selectedAccountId.value } : {});
+        await load();
+        lastRefreshedAt.value = new Date().toISOString();
+        if (showMessage) {
+          const msg = `已同步 ${summary.fetched || 0} 条，新增 ${summary.created || 0} 条，更新 ${summary.updated || 0} 条`;
+          if (summary.errors && summary.errors.length) {
+            ElMessage.warning(`${msg}，但有 ${summary.errors.length} 条同步异常`);
+          } else {
+            ElMessage.success(msg);
+          }
+        }
+      } catch (e) {
+        if (showMessage) ElMessage.error(e.message);
+      } finally {
+        refreshing.value = false;
+      }
     }
 
     function isExpired(row) {
-      if (!row.payment_expire_at) return false;
-      return new Date(row.payment_expire_at) < new Date();
+      if (row.status !== "pending_payment" || !row.payment_expire_at) return false;
+      const expireAt = parseOrderTime(row.payment_expire_at);
+      return expireAt ? expireAt.getTime() <= nowTs.value : false;
     }
 
-    async function updateStatus(row) {
-      try {
-        await http.patch(`/api/orders/${row.id}/status`, { status: row.status });
-        ElMessage.success("状态已更新");
-      } catch (e) { ElMessage.error(e.message); load(); }
+    function parseOrderTime(value) {
+      if (!value || typeof value !== "string") return null;
+      const normalized = value.replace(/\//g, "-");
+      const parsed = new Date(normalized);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    function formatDuration(ms) {
+      const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+      const days = Math.floor(totalSeconds / 86400);
+      const hours = Math.floor((totalSeconds % 86400) / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      const hms = [hours, minutes, seconds].map(v => String(v).padStart(2, "0")).join(":");
+      return days > 0 ? `${days}天 ${hms}` : hms;
+    }
+
+    function paymentDeadlineText(row) {
+      if (row.status === "paid") return "已支付";
+      if (row.status === "cancelled") return "已取消";
+      if (!row.payment_expire_at) return "待支付";
+      const expireAt = parseOrderTime(row.payment_expire_at);
+      if (!expireAt) return row.payment_expire_at;
+      const diff = expireAt.getTime() - nowTs.value;
+      return diff <= 0 ? "已超时" : formatDuration(diff);
+    }
+
+    function paymentDeadlineStyle(row) {
+      if (row.status === "paid") return "color:#67c23a";
+      if (row.status === "cancelled") return "color:#909399";
+      return isExpired(row) ? "color:#f56c6c" : "color:#e6a23c";
+    }
+
+    function statusTagType(status) {
+      if (status === "pending_payment") return "warning";
+      if (status === "paid") return "success";
+      return "info";
+    }
+
+    function isStatusSelected(status) {
+      return selectedStatuses.value.includes(status);
+    }
+
+    async function toggleStatus(status) {
+      if (isStatusSelected(status)) {
+        if (selectedStatuses.value.length === 1) return;
+        selectedStatuses.value = selectedStatuses.value.filter(item => item !== status);
+      } else {
+        selectedStatuses.value = [...selectedStatuses.value, status];
+      }
+      await load();
+    }
+
+    async function selectAllStatuses() {
+      selectedStatuses.value = statusOptions.map(opt => opt.value);
+      await load();
     }
 
     function openPay(row) {
       window.open(row.payment_url, "_blank");
     }
 
+    async function openDetail(row) {
+      detailLoading.value = true;
+      detailDrawer.value = true;
+      try {
+        detailOrder.value = await http.get(`/api/orders/${row.id}/detail`);
+      } catch (e) {
+        ElMessage.error(e.message);
+      } finally {
+        detailLoading.value = false;
+      }
+    }
+
     async function del(row) {
       await ElMessageBox.confirm(`确认删除订单 ${row.order_id}？`, "删除确认", { type: "warning" });
       try {
         await http.delete(`/api/orders/${row.id}`);
-        ElMessage.success("已删除"); load();
+        ElMessage.success("已删除"); await load();
       } catch (e) { ElMessage.error(e.message); }
     }
 
-    onMounted(load);
-    return { orders, load, isExpired, updateStatus, openPay, del, fmtDate };
+    onMounted(async () => {
+      await loadAccounts();
+      await refreshOrders(false);
+      refreshTimer = setInterval(() => refreshOrders(false), 60 * 1000);
+      countdownTimer = setInterval(() => { nowTs.value = Date.now(); }, 1000);
+    });
+    onUnmounted(() => {
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
+      refreshTimer = null;
+      countdownTimer = null;
+    });
+    return {
+      orders, accounts, selectedAccountId, load, refreshOrders, refreshing, lastRefreshedAt, isExpired,
+      openPay, del, fmtDate, paymentDeadlineText, paymentDeadlineStyle,
+      statusOptions, statusTagType, isStatusSelected, toggleStatus,
+      allStatusesSelected, selectAllStatuses, detailDrawer, detailLoading,
+      detailOrder, openDetail
+    };
   }
 };
 

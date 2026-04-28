@@ -52,7 +52,11 @@ def _migrate():
             "ALTER TABLE vehicles ADD COLUMN remote_ids_json TEXT DEFAULT '{}'",
             "ALTER TABLE tasks ADD COLUMN driver_passenger_id INTEGER REFERENCES passengers(id)",
             "ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER REFERENCES tasks(id)",
+            "ALTER TABLE tasks ADD COLUMN split_source_task_id INTEGER REFERENCES tasks(id)",
             "ALTER TABLE tasks ADD COLUMN linked_trip_json TEXT",
+            "ALTER TABLE orders ADD COLUMN ship_type VARCHAR(64)",
+            "ALTER TABLE orders ADD COLUMN order_items_json TEXT DEFAULT '[]'",
+            "ALTER TABLE orders ADD COLUMN remote_created_at DATETIME",
         ]:
             try:
                 conn.execute(__import__("sqlalchemy").text(ddl))
