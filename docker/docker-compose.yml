@@ -1,10 +1,34 @@
-# Selenium Grid 4 + Chrome 节点（带 Xvfb + VNC）
+# 嵊泗渡轮抢票系统 + Selenium Grid 4 + Chrome 节点
 # 启动：docker compose -f docker/docker-compose.yml up -d
-# VNC 客户端连接：192.168.1.117:5900（无密码）
-# noVNC 浏览器访问：http://192.168.1.117:7900
-# Hub API / WebDriver：http://192.168.1.117:14444
+# VNC 客户端连接：localhost:5900（无密码）
+# noVNC 浏览器访问：http://localhost:7900
+# WebDriver 入口：http://selenium-hub:4444/wd/hub（容器内部）/ http://localhost:14444（宿主机）
 
 services:
+  ################################################################
+  # App 应用
+  ################################################################
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: ferry-watcher
+    ports:
+      - "8000:8000"
+    volumes:
+      # 持久化 SQLite 数据库
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+      # SQLite 数据文件路径（与 models.py 的 database.py 配合）
+      - DB_PATH=/app/data/ferry.db
+    depends_on:
+      - selenium-hub
+    restart: unless-stopped
+
+  ################################################################
+  # Selenium Grid 4
+  ################################################################
   selenium-hub:
     image: selenium/hub:4.26.0
     container_name: selenium-hub
@@ -12,6 +36,7 @@ services:
       - "14444:4444"   # WebDriver 入口（保持与系统配置一致）
       - "4442:4442"    # 事件总线发布
       - "4443:4443"    # 事件总线订阅
+    restart: unless-stopped
 
   selenium-chrome:
     image: selenium/node-chrome:4.26.0
@@ -25,17 +50,15 @@ services:
       - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
       - SE_NODE_MAX_SESSIONS=3
       - SE_NODE_SESSION_TIMEOUT=300
-      # Xvfb 虚拟显示器 —— 必须为 true，否则非 headless 模式下 Chrome 无法启动
       - SE_START_XVFB=true
       - SE_SCREEN_WIDTH=1920
       - SE_SCREEN_HEIGHT=1080
       - SE_SCREEN_DEPTH=24
       - SE_SCREEN_DPI=96
-      # VNC（TigerVNC 客户端连接端口 5900，无密码）
       - SE_VNC_NO_PASSWORD=1
       - SE_VNC_PORT=5900
-      # noVNC（浏览器访问端口 7900）
       - SE_NO_VNC_PORT=7900
     ports:
       - "5900:5900"    # VNC
       - "7900:7900"    # noVNC（浏览器直接看）
+    restart: unless-stopped

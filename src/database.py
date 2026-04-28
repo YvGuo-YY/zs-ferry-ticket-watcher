@@ -3,8 +3,11 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "ferry.db")
+DB_PATH = os.environ.get("DB_PATH") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "ferry.db"
+)
+# 确保数据目录存在（Docker volume 挂载场景）
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(
